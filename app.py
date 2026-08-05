@@ -5,6 +5,7 @@ import os
 import difflib
 import unicodedata
 import tempfile
+import base64  # PDF 웹 뷰어를 위한 모듈 추가
 
 # ==========================================
 # 정규표현식 및 상수 사전 컴파일
@@ -689,7 +690,6 @@ if uploaded_file is not None:
         
         def update_log(msg):
             log_messages.append(msg)
-            # 최신 로그가 아래로 쌓이도록 텍스트 박스로 렌더링
             log_placeholder.code('\n'.join(log_messages), language="text")
             
         with st.spinner("PDF를 분석하고 책갈피를 생성 중입니다..."):
@@ -705,18 +705,23 @@ if uploaded_file is not None:
         if extracted_toc:
             st.success("✅ 작업이 완료되었습니다! 아래에서 결과를 확인하고 다운로드하세요.")
             
-            col1, col2 = st.columns(2)
+            # 레이아웃을 1:1 비율의 2단 컴포넌트로 분리
+            col1, col2 = st.columns([1, 1])
             
             with col1:
                 st.markdown("### 🗂️ 생성된 책갈피 구조")
                 with st.container(height=400):
-                    toc_md = ""
+                    # HTML과 인라인 스타일을 이용해 강제로 한 줄씩 떨어지도록 처리
+                    toc_html = "<ul style='list-style-type: none; padding-left: 0;'>"
                     for item in extracted_toc:
                         level, title, page, _ = item
                         if level > 0 and title != "끝페이지":
-                            indent = "&nbsp;" * 4 * (level - 1)
-                            toc_md += f"{indent}- **{title}** (p.{page})\n"
-                    st.markdown(toc_md)
+                            indent = (level - 1) * 20
+                            icon = "📄" if level == 1 else "↳"
+                            toc_html += f"<li style='margin-left: {indent}px; margin-bottom: 8px;'>{icon} <b>{title}</b> <span style='color: gray; font-size: 0.9em;'>(p.{page})</span></li>"
+                    toc_html += "</ul>"
+                    
+                    st.markdown(toc_html, unsafe_allow_html=True)
             
             with col2:
                 st.markdown("### 💾 파일 다운로드")
@@ -731,6 +736,14 @@ if uploaded_file is not None:
                     mime="application/pdf",
                     use_container_width=True
                 )
+                
+            st.markdown("---")
+            st.markdown("### 👁️ 웹에서 PDF 미리보기")
+            
+            # Base64 인코딩 후 iframe으로 PDF 뷰어 구성
+            base64_pdf = base64.b64encode(pdf_data).decode('utf-8')
+            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#toolbar=0&navpanes=1" width="100%" height="800" type="application/pdf"></iframe>'
+            st.markdown(pdf_display, unsafe_allow_html=True)
                 
         # 메모리 반환 및 임시 파일 삭제
         try:
