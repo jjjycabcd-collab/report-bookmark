@@ -1,11 +1,12 @@
 import streamlit as st
+import streamlit.components.v1 as components  # PDF 독립 렌더링을 위한 컴포넌트 추가
 import fitz  # PyMuPDF
 import re
 import os
 import difflib
 import unicodedata
 import tempfile
-import base64  # PDF 웹 뷰어를 위한 모듈 추가
+import base64
 
 # ==========================================
 # 정규표현식 및 상수 사전 컴파일
@@ -747,10 +748,10 @@ if uploaded_file is not None:
             st.markdown("---")
             st.markdown("### 👁️ 웹에서 PDF 미리보기")
             
-            # Base64 인코딩 후 object 태그로 PDF 뷰어 구성 (파라미터 제거)
+            # Streamlit의 components.html을 사용하여 샌드박스(독립된 iframe) 환경에서 PDF 렌더링 (보안 필터 우회)
             base64_pdf = base64.b64encode(pdf_data).decode('utf-8')
-            pdf_display = f'<object data="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="800"></object>'
-            st.markdown(pdf_display, unsafe_allow_html=True)
+            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="100%" type="application/pdf" style="border:none;"></iframe>'
+            components.html(pdf_display, height=800)
                 
         # 메모리 반환 및 임시 파일 삭제
         try:
