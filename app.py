@@ -23,7 +23,6 @@ class StreamlitLogger:
 # 정규표현식 및 상수 사전 컴파일
 # ==========================================
 CLEAN_PATTERN = re.compile(r'[^a-zA-Z0-9가-힣]')
-
 TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MULTILINE)
 
 KOR_IDX = "가나다라마바사아자차카타파하"
@@ -187,7 +186,6 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1):
     if p_idx <= toc_end_idx: return None, 0.0 
     
     dict_data = cache.get_dict(p_idx)
-    page_text = cache.get_text(p_idx)
     
     toc_body = PREFIX_STRIP_PATTERN.sub('', toc_title).strip()
     toc_clean = CLEAN_PATTERN.sub('', toc_body)
@@ -345,7 +343,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
     
     with fitz.open(input_path) as doc:
         total_pages = len(doc)
-        st_logger.print(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {MAX_DEPTH}-depth 수동 적용")
+        st_logger.print(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {MAX_DEPTH}-depth 적용")
         
         cache = PageCache(doc, exclude_footnotes)
 
@@ -387,6 +385,13 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 toc_text += page_text + "\n"
                 toc_end_idx = i 
             else: break
+
+        # ---------------------------------------------------------
+        # [사전 정제 로직] 목차 추출 시 문장이 끊어져 가짜 1-depth가 되는 현상 방지
+        # 예: "1-\n2. 현황" -> "1-2. 현황", "1.\n과제" -> "1. 과제" 로 이어붙임
+        # ---------------------------------------------------------
+        toc_text = re.sub(r'([1-9]\d*-)\s*\n\s*([1-9]\d*)', r'\1\2', toc_text)
+        toc_text = re.sub(r'([1-9]\d*\.)\s*\n\s*([가-힣a-zA-Z])', r'\1 \2', toc_text)
 
         raw_items = []
         for match in TOC_PATTERN.finditer(toc_text):
@@ -661,18 +666,55 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x['toc_idx']))
 
-        st_logger.print("\n5. [핵심 방어선] 동일 그룹 내 기호 종류(Type) 영구 잠금 및 가짜 패턴 숙청 중...")
+        st_logger.print("\n5. [핵심 방어선] 1-depth 유효성 검사 및 동일 기호 영구 잠금 중...")
         valid_items = []
         current_seq_trackers = {} 
+
+        # ---------------------------------------------------------
+        # [유효성 검사 추가] 1-depth 시퀀스 및 페이지 역전 검증 
+        # (ex. "3." 밑에 가짜 "1."이 오는 경우 배제)
+        # ---------------------------------------------------------
+        depth1_type = None
+        depth1_last_num = 0
+        depth1_last_page = -1
 
         for item in resolved_items:
             if item['level'] == 99: continue
             
             tgt_level = item['level']
+            seq_type, seq_num = get_seq_info(item['title'])
             
             if tgt_level == 1:
-                current_seq_trackers.clear()  
-                valid_items.append(item)
+                is_valid_1depth = True
+                
+                # 1-depth 항목에 대한 순서 및 페이지 검증 로직
+                if seq_type and seq_num is not None:
+                    if depth1_type is None:
+                        depth1_type = seq_type
+                        depth1_last_num = seq_num
+                        depth1_last_page = item['page_idx']
+                    else:
+                        if seq_type == depth1_type:
+                            if seq_num > depth1_last_num and item['page_idx'] >= depth1_last_page:
+                                depth1_last_num = seq_num
+                                depth1_last_page = item['page_idx']
+                            elif seq_num <= depth1_last_num or item['page_idx'] < depth1_last_page:
+                                # 이전 번호보다 작거나 페이지가 역전된 경우: 가짜 1-depth로 판정
+                                is_valid_1depth = False
+                                st_logger.print(f"  -> [경고] 1-depth 순서 역전 감지됨: '{item['title']}' -> 배제 처리")
+                        else:
+                            # 기호 체계가 변경되었을 경우 (예: 로마자 -> 숫자)
+                            depth1_type = seq_type
+                            depth1_last_num = seq_num
+                            depth1_last_page = item['page_idx']
+                
+                # 검증을 통과한 1-depth만 최종 리스트에 추가
+                if is_valid_1depth:
+                    current_seq_trackers.clear()  
+                    valid_items.append(item)
+                else:
+                    # 가짜 1-depth는 하위 로직을 오염시키지 않도록 버림
+                    continue
             else:
                 if item.get('is_failed', False): 
                     continue
@@ -680,8 +722,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 keys_to_remove = [k for k in current_seq_trackers.keys() if k > tgt_level]
                 for k in keys_to_remove: 
                     del current_seq_trackers[k]
-                    
-                seq_type, seq_num = get_seq_info(item['title'])
                 
                 if tgt_level not in current_seq_trackers:
                     if seq_type is not None and seq_num is not None:
