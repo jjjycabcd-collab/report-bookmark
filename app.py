@@ -718,7 +718,14 @@ if uploaded_file is not None:
                         if level > 0 and title != "끝페이지":
                             indent = (level - 1) * 20
                             icon = "📄" if level == 1 else "↳"
-                            toc_html += f"<li style='margin-left: {indent}px; margin-bottom: 8px;'>{icon} <b>{title}</b> <span style='color: gray; font-size: 0.9em;'>(p.{page})</span></li>"
+                            
+                            # [점검] 텍스트가 포함된 경우 붉은색으로 스타일링 적용
+                            if "[점검]" in title:
+                                title_html = f"<b style='color: red;'>{title}</b>"
+                            else:
+                                title_html = f"<b>{title}</b>"
+                                
+                            toc_html += f"<li style='margin-left: {indent}px; margin-bottom: 8px;'>{icon} {title_html} <span style='color: gray; font-size: 0.9em;'>(p.{page})</span></li>"
                     toc_html += "</ul>"
                     
                     st.markdown(toc_html, unsafe_allow_html=True)
@@ -740,9 +747,9 @@ if uploaded_file is not None:
             st.markdown("---")
             st.markdown("### 👁️ 웹에서 PDF 미리보기")
             
-            # Base64 인코딩 후 iframe으로 PDF 뷰어 구성
+            # Base64 인코딩 후 object 태그로 PDF 뷰어 구성 (파라미터 제거)
             base64_pdf = base64.b64encode(pdf_data).decode('utf-8')
-            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#toolbar=0&navpanes=1" width="100%" height="800" type="application/pdf"></iframe>'
+            pdf_display = f'<object data="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="800"></object>'
             st.markdown(pdf_display, unsafe_allow_html=True)
                 
         # 메모리 반환 및 임시 파일 삭제
