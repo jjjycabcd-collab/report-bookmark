@@ -4,6 +4,7 @@ import re
 import os
 import difflib
 import unicodedata
+import tempfile  # <--- 이 부분이 반드시 포함되어야 합니다.
 
 # ==========================================
 # [스트림릿 로깅 클래스]
