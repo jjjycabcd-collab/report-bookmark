@@ -4,7 +4,6 @@ import re
 import os
 import difflib
 import unicodedata
-import tempfile
 
 # ==========================================
 # [스트림릿 로깅 클래스]
@@ -23,6 +22,8 @@ class StreamlitLogger:
 # 정규표현식 및 상수 사전 컴파일
 # ==========================================
 CLEAN_PATTERN = re.compile(r'[^a-zA-Z0-9가-힣]')
+
+# [수정 1] 점선(...)뿐만 아니라 세로선(|) 및 단순 공백으로 구분된 목차 페이지 번호까지 완벽 추출
 TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MULTILINE)
 
 KOR_IDX = "가나다라마바사아자차카타파하"
@@ -48,9 +49,6 @@ PREFIX_STRIP_PATTERN = re.compile(rf'^\s*(Chapter\s*\d+|Section\s*\d+|제\s*\d+\
 KOR_CHARS = list(KOR_IDX)
 KOR_MAP = {k: v + 1 for v, k in enumerate(KOR_CHARS)}
 
-# ==========================================
-# 코어 클래스 및 헬퍼 함수
-# ==========================================
 class PageCache:
     def __init__(self, doc, exclude_footnotes=False):
         self.doc = doc
@@ -189,7 +187,6 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1):
     if p_idx <= toc_end_idx: return None, 0.0 
     
     dict_data = cache.get_dict(p_idx)
-    page_text = cache.get_text(p_idx)
     
     toc_body = PREFIX_STRIP_PATTERN.sub('', toc_title).strip()
     toc_clean = CLEAN_PATTERN.sub('', toc_body)
@@ -330,12 +327,6 @@ def make_prefix(seq_type, num):
     if seq_type == 'num_dot': return f"{num}."
     return None
 
-def classify_document_type(cache, total_pages):
-    text_clean = re.sub(r'\s+', '', "".join(cache.get_text(i) for i in range(min(10, total_pages))))
-    if any(k in text_clean for k in ["표준", "지침", "도서", "단행본"]): return "단행본"
-    if any(k in text_clean for k in ["보도자료", "신문", "연보"]): return "기타"
-    return "기타"
-
 def get_parent_1depth(p_idx, y0, items):
     for item in reversed(items):
         if item['level'] == 1:
@@ -346,7 +337,6 @@ def get_parent_1depth(p_idx, y0, items):
 # ==========================================
 # 통합 프로세스 로직
 # ==========================================
-# [수정] 파라미터에 fallback_1depth 옵션 추가
 def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, fallback_1depth, st_logger):
     
     MAX_DEPTH = max_depth
@@ -354,7 +344,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
     
     with fitz.open(input_path) as doc:
         total_pages = len(doc)
-        st_logger.print(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {MAX_DEPTH}-depth 수동 적용")
+        st_logger.print(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {MAX_DEPTH}-depth 적용")
         
         cache = PageCache(doc, exclude_footnotes)
 
@@ -732,7 +722,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         resolved_items = valid_items
 
         if SCAN_MODE == "FULL_SCAN":
-            st_logger.print(f"\n6. [순서 검증] {MAX_DEPTH}-depth 누락 항목 1번부터 강제 역추적 복원 중...")
+            st_logger.print(f"\n6. [순서 검증] {MAX_DEPTH}-depth 누락 항목 1번부터 강제 역추적 복 복원 중...")
             recovered_items, seq_trackers = [], {}
             current_1depth_page = 0
             current_1depth_y0 = 0.0
@@ -792,35 +782,42 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     seq_trackers[seq_type] = {'level': item['level'], 'last_num': seq_num, 'last_page': item['page_idx'], 'last_y0': item['y0']}
             
             resolved_items.extend(recovered_items)
-            resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x['toc_idx'])) # 정렬 재수행
         else:
             st_logger.print(f"\n6. [순서 검증] 생략 (TOC_BASED 모드 설정됨)")
 
         ########## [추가 로직] 1-depth 누락 시 하위(2-depth) 페이지로 강제 연결 (Fallback) ##########
         if fallback_1depth:
-            st_logger.print("\n[옵션 적용] 미발견 1-depth 항목을 하위(2-depth) 목차 페이지로 강제 연결 중...")
-            for i in range(len(resolved_items) - 1):
-                current_item = resolved_items[i]
-                next_item = resolved_items[i + 1]
-                
-                # 현재 항목이 1-depth 이고, 매칭에 실패([점검] 상태) 했을 때
-                if current_item['level'] == 1 and current_item.get('is_failed', False):
-                    # 바로 다음 항목이 2-depth 이고, 정상적으로 본문 매칭에 성공했다면
-                    if next_item['level'] == 2 and not next_item.get('is_failed', False):
-                        # 1-depth의 페이지를 2-depth의 페이지로 강제 복사하고 y좌표는 상단(0.0)으로 설정
-                        current_item['page_idx'] = next_item['page_idx']
-                        current_item['y0'] = 0.0  
-                        current_item['is_failed'] = False
+            st_logger.print("\n[옵션 적용] 목차 기반 1-depth 강제 연결 로직 수행 중...")
+            
+            # 1. 목차 원본 순서(toc_idx)대로 정렬하여 부모-자식 관계를 명확히 함
+            resolved_items.sort(key=lambda x: x.get('toc_idx', 999))
+            
+            for i in range(len(resolved_items)):
+                item = resolved_items[i]
+                # 1-depth이면서 본문 탐색에 실패([점검])한 항목인 경우
+                if item['level'] == 1 and item.get('is_failed', False):
+                    
+                    # 그 뒤에 오는 항목들을 순회하며 첫 번째 정상 하위 항목을 찾음
+                    for j in range(i + 1, len(resolved_items)):
+                        child_item = resolved_items[j]
                         
-                        # 화면 표시용 [점검] 태그 제거
-                        if '[점검]' in current_item['title']:
-                            current_item['title'] = current_item['title'].replace('[점검] ', '')
+                        # 만약 다음 1-depth를 만나면 내 하위 항목이 아니므로 탐색 중단
+                        if child_item['level'] == 1:
+                            break
+                        
+                        # 정상적으로 매칭된 하위 항목(2-depth 등)을 발견하면 좌표 상속
+                        if not child_item.get('is_failed', False):
+                            item['page_idx'] = child_item['page_idx']
+                            item['y0'] = 0.0  # 해당 페이지의 최상단으로 연결
+                            item['is_failed'] = False
+                            
+                            if '[점검]' in item['title']:
+                                item['title'] = item['title'].replace('[점검] ', '')
+                            break # 강제 연결 완료, 다음 1-depth를 처리하러 감
+                            
+            # 2. 강제 연결 작업이 끝난 후 다시 기존 로직(페이지, y좌표 순)으로 재정렬
+            resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x.get('toc_idx', 999)))
         ######################################################################################
-
-        st_logger.print("\n[메타데이터] 문서 내용 기반 자료유형 자동 분류 및 매핑 중...")
-        doc_type = classify_document_type(cache, total_pages)
-        st_logger.print(f"  -> 분류 결과: {doc_type}")
-        doc.set_metadata({'subject': doc_type, 'keywords': f"자료유형:{doc_type}"})
 
         st_logger.print("\n7. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
         
@@ -899,7 +896,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         doc.set_toc(new_toc)
         doc.save(output_path)
 
-    st_logger.print("\n✨ 성공! 책갈피 생성이 완료되었습니다.")
+    st_logger.print("\n✨ 성공! 1-depth 강제 연결 로직이 적용되어 책갈피 생성이 완료되었습니다.")
     return new_toc
 
 
@@ -916,7 +913,8 @@ st.sidebar.header("⚙️ 실행 옵션 설정")
 SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0)
 EXCLUDE_FOOTNOTES = st.sidebar.checkbox("2. 하단 각주(Footnote) 강제 배제", value=False)
 TARGET_DEPTH = st.sidebar.number_input("3. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
-FALLBACK_1DEPTH = st.sidebar.checkbox("4. 1-depth 누락 시 하위(2-depth) 강제 연결", value=False, help="표 안의 텍스트 분리 등으로 1-depth 본문 매칭이 실패할 경우, 바로 아래 2-depth 항목이 위치한 페이지 최상단으로 1-depth를 연결합니다.")
+# 1-depth 강제 연결 기능을 선택할 수 있는 체크박스 추가
+FALLBACK_1DEPTH = st.sidebar.checkbox("4. 1-depth 누락 시 하위(2-depth) 강제 연결", value=False, help="표 안의 텍스트 분리 등으로 1-depth 본문 매칭이 실패할 경우, 바로 아래 성공한 2-depth 항목이 위치한 페이지의 최상단으로 1-depth를 강제 연결합니다.")
 
 uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
 
@@ -938,7 +936,7 @@ if uploaded_file is not None:
                 scan_mode=SCAN_MODE,
                 exclude_footnotes=EXCLUDE_FOOTNOTES,
                 max_depth=TARGET_DEPTH,
-                fallback_1depth=FALLBACK_1DEPTH, # 새로 추가한 옵션 파라미터 전달
+                fallback_1depth=FALLBACK_1DEPTH, # 1-depth 강제 연결 파라미터 전달
                 st_logger=st_logger
             )
             
