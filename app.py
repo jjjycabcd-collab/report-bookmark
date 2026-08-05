@@ -4,7 +4,7 @@ import re
 import os
 import difflib
 import unicodedata
-import tempfile  # <--- 이 부분이 반드시 포함되어야 합니다.
+import tempfile
 
 # ==========================================
 # [스트림릿 로깅 클래스]
@@ -24,7 +24,6 @@ class StreamlitLogger:
 # ==========================================
 CLEAN_PATTERN = re.compile(r'[^a-zA-Z0-9가-힣]')
 
-# [수정 1] 점선(...)뿐만 아니라 세로선(|) 및 단순 공백으로 구분된 목차 페이지 번호까지 완벽 추출
 TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MULTILINE)
 
 KOR_IDX = "가나다라마바사아자차카타파하"
@@ -188,6 +187,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1):
     if p_idx <= toc_end_idx: return None, 0.0 
     
     dict_data = cache.get_dict(p_idx)
+    page_text = cache.get_text(p_idx)
     
     toc_body = PREFIX_STRIP_PATTERN.sub('', toc_title).strip()
     toc_clean = CLEAN_PATTERN.sub('', toc_body)
@@ -345,7 +345,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
     
     with fitz.open(input_path) as doc:
         total_pages = len(doc)
-        st_logger.print(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {MAX_DEPTH}-depth 적용")
+        st_logger.print(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {MAX_DEPTH}-depth 수동 적용")
         
         cache = PageCache(doc, exclude_footnotes)
 
@@ -723,7 +723,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         resolved_items = valid_items
 
         if SCAN_MODE == "FULL_SCAN":
-            st_logger.print(f"\n6. [순서 검증] {MAX_DEPTH}-depth 누락 항목 1번부터 강제 역추적 복 복원 중...")
+            st_logger.print(f"\n6. [순서 검증] {MAX_DEPTH}-depth 누락 항목 1번부터 강제 역추적 복원 중...")
             recovered_items, seq_trackers = [], {}
             current_1depth_page = 0
             current_1depth_y0 = 0.0
@@ -783,6 +783,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     seq_trackers[seq_type] = {'level': item['level'], 'last_num': seq_num, 'last_page': item['page_idx'], 'last_y0': item['y0']}
             
             resolved_items.extend(recovered_items)
+            resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x['toc_idx'])) # 정렬 재수행
         else:
             st_logger.print(f"\n6. [순서 검증] 생략 (TOC_BASED 모드 설정됨)")
 
@@ -897,7 +898,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         doc.set_toc(new_toc)
         doc.save(output_path)
 
-    st_logger.print("\n✨ 성공! 1-depth 강제 연결 로직이 적용되어 책갈피 생성이 완료되었습니다.")
+    st_logger.print("\n✨ 성공! 책갈피 생성이 완료되었습니다.")
     return new_toc
 
 
@@ -914,12 +915,21 @@ st.sidebar.header("⚙️ 실행 옵션 설정")
 SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0)
 EXCLUDE_FOOTNOTES = st.sidebar.checkbox("2. 하단 각주(Footnote) 강제 배제", value=False)
 TARGET_DEPTH = st.sidebar.number_input("3. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
-# 1-depth 강제 연결 기능을 선택할 수 있는 체크박스 추가
 FALLBACK_1DEPTH = st.sidebar.checkbox("4. 1-depth 누락 시 하위(2-depth) 강제 연결", value=False, help="표 안의 텍스트 분리 등으로 1-depth 본문 매칭이 실패할 경우, 바로 아래 성공한 2-depth 항목이 위치한 페이지의 최상단으로 1-depth를 강제 연결합니다.")
 
 uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
 
+# 세션 상태 초기화 (새로운 파일 업로드 시 기존 데이터 날리기)
+if 'current_file' not in st.session_state:
+    st.session_state.current_file = None
+
 if uploaded_file is not None:
+    # 파일이 변경되었는지 체크하여 세션 초기화
+    if st.session_state.current_file != uploaded_file.name:
+        st.session_state.current_file = uploaded_file.name
+        st.session_state.extracted_toc = None
+        st.session_state.pdf_data = None
+
     if st.button("🚀 책갈피 생성 시작", type="primary"):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_in:
             tmp_in.write(uploaded_file.getvalue())
@@ -937,46 +947,15 @@ if uploaded_file is not None:
                 scan_mode=SCAN_MODE,
                 exclude_footnotes=EXCLUDE_FOOTNOTES,
                 max_depth=TARGET_DEPTH,
-                fallback_1depth=FALLBACK_1DEPTH, # 1-depth 강제 연결 파라미터 전달
+                fallback_1depth=FALLBACK_1DEPTH,
                 st_logger=st_logger
             )
             
         if extracted_toc:
-            st.success("✅ 작업이 완료되었습니다! 아래에서 결과를 확인하고 다운로드하세요.")
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                st.markdown("### 🗂️ 생성된 책갈피 구조")
-                with st.container(height=600):
-                    toc_html = "<ul style='list-style-type: none; padding-left: 0;'>"
-                    for item in extracted_toc:
-                        level, title, page, _ = item
-                        if level > 0 and title != "끝페이지":
-                            indent = (level - 1) * 20
-                            icon = "📄" if level == 1 else "↳"
-                            
-                            if "[점검]" in title:
-                                title_html = f"<b style='color: red;'>{title}</b>"
-                            else:
-                                title_html = f"<b>{title}</b>"
-                                
-                            toc_html += f"<li style='margin-left: {indent}px; margin-bottom: 8px;'>{icon} {title_html} <span style='color: gray; font-size: 0.9em;'>(p.{page})</span></li>"
-                    toc_html += "</ul>"
-                    st.markdown(toc_html, unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown("### 💾 파일 다운로드")
-                st.info("책갈피(목차)가 삽입된 새로운 PDF 파일입니다.")
-                with open(tmp_out_path, "rb") as f:
-                    pdf_data = f.read()
-                    
-                st.download_button(
-                    label="📥 책갈피가 추가된 PDF 다운로드",
-                    data=pdf_data,
-                    file_name=f"bookmarked_{uploaded_file.name}",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+            # 성공한 결과를 세션 상태에 저장
+            st.session_state.extracted_toc = extracted_toc
+            with open(tmp_out_path, "rb") as f:
+                st.session_state.pdf_data = f.read()
                 
         # 임시 파일 삭제
         try:
@@ -984,3 +963,39 @@ if uploaded_file is not None:
             os.remove(tmp_out_path)
         except OSError:
             pass
+
+    # 처리 결과가 세션에 존재하면 화면에 항상 렌더링 (다운로드 버튼을 눌러도 사라지지 않음)
+    if st.session_state.get('extracted_toc') and st.session_state.get('pdf_data'):
+        st.success("✅ 작업이 완료되었습니다! 아래에서 결과를 확인하고 다운로드하세요.")
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.markdown("### 🗂️ 생성된 책갈피 구조")
+            with st.container(height=600):
+                toc_html = "<ul style='list-style-type: none; padding-left: 0;'>"
+                for item in st.session_state.extracted_toc:
+                    level, title, page, _ = item
+                    if level > 0 and title != "끝페이지":
+                        indent = (level - 1) * 20
+                        icon = "📄" if level == 1 else "↳"
+                        
+                        if "[점검]" in title:
+                            title_html = f"<b style='color: red;'>{title}</b>"
+                        else:
+                            title_html = f"<b>{title}</b>"
+                            
+                        toc_html += f"<li style='margin-left: {indent}px; margin-bottom: 8px;'>{icon} {title_html} <span style='color: gray; font-size: 0.9em;'>(p.{page})</span></li>"
+                toc_html += "</ul>"
+                st.markdown(toc_html, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("### 💾 파일 다운로드")
+            st.info("책갈피(목차)가 삽입된 새로운 PDF 파일입니다.")
+            
+            st.download_button(
+                label="📥 책갈피가 추가된 PDF 다운로드",
+                data=st.session_state.pdf_data,
+                file_name=f"bookmarked_{uploaded_file.name}",
+                mime="application/pdf",
+                use_container_width=True
+            )
