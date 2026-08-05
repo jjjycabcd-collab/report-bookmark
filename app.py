@@ -324,7 +324,7 @@ def get_parent_1depth(p_idx, y0, items):
     return None
 
 # ==========================================
-# 통합 프로세스 로직 (초기 원본 복구)
+# 통합 프로세스 로직 (가장 안정적이었던 초기 원본 100% 복구)
 # ==========================================
 def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, log_cb):
     with fitz.open(input_path) as doc:
@@ -847,18 +847,18 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
 
 # ==========================================
-# Streamlit 웹 UI 구현 (미리보기 제거)
+# Streamlit 웹 UI 구현 (미리보기 기능 완전히 제거)
 # ==========================================
 st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 
 st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
-# 사이드바: 실행 옵션
+# 사이드바: 실행 옵션 (로컬과 동일하게 작동하도록 값 전달)
 st.sidebar.header("⚙️ 실행 옵션 설정")
 scan_mode_opt = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0, help="FULL_SCAN: 본문까지 정밀 탐색하여 누락 복원 / TOC_BASED: 목차 페이지 위주로 스캔")
 exclude_footnotes_opt = st.sidebar.checkbox("2. 하단 각주(Footnote) 강제 배제", value=False)
-target_depth_opt = st.sidebar.number_input("3. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
+target_depth_opt = st.sidebar.number_input("3. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=3, step=1) # 2-depth 누락 방지를 위해 기본값을 로컬 권장치인 3으로 변경
 
 # 메인 화면: 파일 업로드
 uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
@@ -898,7 +898,7 @@ if uploaded_file is not None:
             
             with col1:
                 st.markdown("### 🗂️ 생성된 책갈피 구조")
-                with st.container(height=600): # 미리보기가 제거되어 높이를 조금 키움
+                with st.container(height=600):
                     # HTML과 인라인 스타일을 이용해 강제로 한 줄씩 떨어지도록 처리
                     toc_html = "<ul style='list-style-type: none; padding-left: 0;'>"
                     for item in extracted_toc:
