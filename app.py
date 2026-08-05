@@ -67,9 +67,12 @@ class PageCache:
         if p_idx not in self.exclude_bboxes_cache:
             page = self.doc[p_idx]
             bboxes = []
+            
+            # 오직 행/열 3개 이상의 '진짜 빽빽한 데이터 표'만 안전하게 배제
             for t in page.find_tables():
                 if t.row_count >= 3 or t.col_count >= 3:
                     bboxes.append(fitz.Rect(t.bbox))
+                    
             self.exclude_bboxes_cache[p_idx] = bboxes
         return self.exclude_bboxes_cache[p_idx]
 
@@ -128,6 +131,7 @@ class PageCache:
 
 def fix_broken_characters(text):
     if not text: return text
+    # 한글 NFD(자모분리)를 NFC(정상결합)로 강제 정규화
     text = unicodedata.normalize('NFC', text)
     text = text.replace('\uf85e', '·').replace('獜', '·')      
     return re.sub(r'(?<=[가-힣])[^\s가-힣\x20-\x7E·]+(?=[가-힣])', '·', text)
@@ -184,6 +188,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1):
     core_length = max(5, int(len(toc_clean) * 0.8))
     toc_core = toc_clean[:core_length]
     
+    # 1단계: 라인 단위 정밀 매칭
     for b in dict_data.get("blocks", []):
         if b.get("type") != 0: continue
         for l in b.get("lines", []):
@@ -208,6 +213,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1):
                 if ratio >= 0.75:
                     return l["bbox"][1], max_size
                     
+    # 2단계: 블록 단위 융합(Fallback) 매칭
     for b in dict_data.get("blocks", []):
         if b.get("type") != 0: continue
         block_text = ""
@@ -324,12 +330,17 @@ def get_parent_1depth(p_idx, y0, items):
     return None
 
 # ==========================================
-# 통합 프로세스 로직 (가장 안정적이었던 초기 원본 100% 복구)
+# 통합 프로세스 로직 (초기 원본 완벽 복원)
 # ==========================================
 def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, log_cb):
+    
+    # 웹 옵션 값을 로직 내 전역변수로 매핑
+    MAX_DEPTH = max_depth
+    SCAN_MODE = scan_mode
+    
     with fitz.open(input_path) as doc:
         total_pages = len(doc)
-        log_cb(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {max_depth}-depth 수동 적용")
+        log_cb(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {MAX_DEPTH}-depth 수동 적용")
         
         cache = PageCache(doc, exclude_footnotes)
 
@@ -399,12 +410,12 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 is_ghost = is_ghost_title(CLEAN_PATTERN.sub('', title))
                 
                 is_valid = is_jang or is_jeol or is_butim or is_ghost
-                if max_depth >= 3 and is_3depth_in_jang(title): is_valid = True
+                if MAX_DEPTH >= 3 and is_3depth_in_jang(title): is_valid = True
                 if not is_valid: continue
                     
             toc_bookmarks.append((title, p_num))
 
-        log_cb("\n2. 본문 좌표 추적 및 1-2-3 depth 상하 범주 유효성 통제 중...")
+        log_cb("2. 본문 좌표 추적 및 1-2-3 depth 상하 범주 유효성 통제 중...")
         offset = 0
         for title, printed_page in toc_bookmarks:
             for p_idx in range(toc_end_idx + 1, total_pages):
@@ -425,7 +436,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             clean_t = CLEAN_PATTERN.sub('', title)
             if clean_t in created_titles: continue
 
-            level = determine_level(title, has_jang, font_size=0, is_body_scan=False, max_depth=max_depth)
+            level = determine_level(title, has_jang, font_size=0, is_body_scan=False, max_depth=MAX_DEPTH)
             target_page_idx = min(max(printed_page + offset, toc_end_idx + 1), total_pages - 1)
             found, found_page, found_y0, found_f_size = False, target_page_idx, 0.0, 0.0
 
@@ -466,7 +477,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             else:
                 found_page, found_y0, seq_y0 = seq_page, seq_y0 + 0.0001, seq_y0 + 0.0001
             
-            final_level = determine_level(title, has_jang, font_size=found_f_size, is_body_scan=False, max_depth=max_depth) if found else level
+            final_level = determine_level(title, has_jang, font_size=found_f_size, is_body_scan=False, max_depth=MAX_DEPTH) if found else level
             resolved_items.append({
                 'toc_idx': toc_idx, 'title': title if found else f"[점검] {title}", 'page_idx': found_page, 
                 'y0': found_y0, 'f_size': found_f_size, 'level': final_level,
@@ -488,7 +499,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 lvl = item['level']
                 global_ref_fonts[lvl] = max(global_ref_fonts.get(lvl, 0.0), item['f_size'])
 
-        log_cb("\n3. 유령 항목(제출문, 요약서, 참고문헌 등) 전체 본문 스캔 및 구출 중...")
+        log_cb("3. 유령 항목(제출문, 요약서, 참고문헌 등) 전체 본문 스캔 및 구출 중...")
         existing_titles = [CLEAN_PATTERN.sub('', re.sub(r'^[0-9가-하]+[\.\)]?\s*', '', p['title'].replace('[점검] ', ''))).lower() for p in resolved_items if not p['is_failed']]
         ghost_rules = [
             (re.compile(r'제\s*출\s*문'), '제출문'), (re.compile(r'보\s*고\s*서\s*요\s*약\s*서|요\s*약\s*서'), '요약서'),
@@ -529,7 +540,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         found_ghosts.add(display_text)
                         break
 
-        log_cb("\n4. 문법 꼬리 자르기 및 이중 폰트 크기(글로벌/로컬) 가비지 필터링 가동 중...")
+        log_cb("4. 문법 꼬리 자르기 및 이중 폰트 크기(글로벌/로컬) 가비지 필터링 가동 중...")
         resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x['toc_idx']))
         
         active_fonts = {1: 0.0, 2: 0.0, 3: 0.0}
@@ -560,7 +571,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 continue
 
                     cand_prefix, cand_clean, is_dup = extract_prefix(text), CLEAN_PATTERN.sub('', text), False
-                    cand_level_toc = determine_level(text, has_jang, font_size=max_size, font_trackers=global_font_trackers, is_body_scan=True, max_depth=max_depth)
+                    cand_level_toc = determine_level(text, has_jang, font_size=max_size, font_trackers=global_font_trackers, is_body_scan=True, max_depth=MAX_DEPTH)
                     if cand_level_toc == 99: continue
                     
                     cand_1depth_parent = get_parent_1depth(p_idx, y0, resolved_items)
@@ -617,7 +628,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                             active_fonts[3] = 0.0
 
                     if not is_dup and not is_desc:
-                        if scan_mode == "FULL_SCAN":
+                        if SCAN_MODE == "FULL_SCAN":
                             is_valid_size = True
                             
                             if global_ref_fonts.get(cand_level_toc, 0.0) > 0.0:
@@ -641,7 +652,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x['toc_idx']))
 
-        log_cb("\n5. [핵심 방어선] 동일 그룹 내 기호 종류(Type) 영구 잠금 및 가짜 패턴 숙청 중...")
+        log_cb("5. [핵심 방어선] 동일 그룹 내 기호 종류(Type) 영구 잠금 및 가짜 패턴 숙청 중...")
         valid_items = []
         current_seq_trackers = {} 
 
@@ -702,8 +713,8 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         resolved_items = valid_items
 
-        if scan_mode == "FULL_SCAN":
-            log_cb(f"\n6. [순서 검증] {max_depth}-depth 누락 항목 1번부터 강제 역추적 복원 중...")
+        if SCAN_MODE == "FULL_SCAN":
+            log_cb(f"6. [순서 검증] {MAX_DEPTH}-depth 누락 항목 1번부터 강제 역추적 복원 중...")
             recovered_items, seq_trackers = [], {}
             current_1depth_page = 0
             current_1depth_y0 = 0.0
@@ -764,9 +775,9 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             
             resolved_items.extend(recovered_items)
         else:
-            log_cb(f"\n6. [순서 검증] 생략 (TOC_BASED 모드 설정됨)")
+            log_cb(f"6. [순서 검증] 생략 (TOC_BASED 모드 설정됨)")
 
-        log_cb("\n7. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
+        log_cb("7. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
         
         filtered_items = []
         seen_ghosts = set()
@@ -826,7 +837,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     target_level = 1 
                     current_1depth_title = '참고문헌'
             
-            if target_level > max_depth: continue
+            if target_level > MAX_DEPTH: continue
                 
             if target_level > 1 and any(x in current_1depth_title for x in ['표지', '제출문', '요약서', '요약문', 'summary', 'contents', '목차', '참고문헌', '붙임', '별첨', '부록']): continue
                 
@@ -841,13 +852,13 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         new_toc.append([1, "끝페이지", total_pages, {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, 0)}])
         doc.set_toc(new_toc)
         doc.save(output_path)
-        log_cb("\n✨ 성공적으로 PDF 책갈피 생성이 완료되었습니다.")
+        log_cb("✨ 성공적으로 PDF 책갈피 생성이 완료되었습니다.")
         
         return new_toc
 
 
 # ==========================================
-# Streamlit 웹 UI 구현 (미리보기 기능 완전히 제거)
+# Streamlit 웹 UI 구현 (미리보기 배제 & 점검 붉은색)
 # ==========================================
 st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 
@@ -858,7 +869,7 @@ st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표�
 st.sidebar.header("⚙️ 실행 옵션 설정")
 scan_mode_opt = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0, help="FULL_SCAN: 본문까지 정밀 탐색하여 누락 복원 / TOC_BASED: 목차 페이지 위주로 스캔")
 exclude_footnotes_opt = st.sidebar.checkbox("2. 하단 각주(Footnote) 강제 배제", value=False)
-target_depth_opt = st.sidebar.number_input("3. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=3, step=1) # 2-depth 누락 방지를 위해 기본값을 로컬 권장치인 3으로 변경
+target_depth_opt = st.sidebar.number_input("3. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=3, step=1)
 
 # 메인 화면: 파일 업로드
 uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
@@ -893,7 +904,7 @@ if uploaded_file is not None:
         if extracted_toc:
             st.success("✅ 작업이 완료되었습니다! 아래에서 결과를 확인하고 다운로드하세요.")
             
-            # 레이아웃을 1:1 비율의 2단 컴포넌트로 분리
+            # 레이아웃 분리
             col1, col2 = st.columns([1, 1])
             
             with col1:
