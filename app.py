@@ -7,8 +7,31 @@ import unicodedata
 import tempfile
 
 # ==========================================
-# 정규표현식 및 상수 사전 컴파일
+# Streamlit 웹 UI 구현 및 전역 변수 매핑
 # ==========================================
+st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
+
+st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
+st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
+
+# 사이드바: 실행 옵션 (기본값을 PC 원본과 완전히 동일하게 세팅)
+st.sidebar.header("⚙️ 실행 옵션 설정")
+scan_mode_opt = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0, help="FULL_SCAN: 본문까지 정밀 탐색하여 누락 복원 / TOC_BASED: 목차 페이지 위주로 스캔")
+exclude_footnotes_opt = st.sidebar.checkbox("2. 하단 각주(Footnote) 강제 배제", value=False)
+target_depth_opt = st.sidebar.number_input("3. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
+
+# ==========================================
+# [실행 옵션 설정] - PC 원본 로직과 연결되는 전역 변수
+# ==========================================
+SCAN_MODE = scan_mode_opt
+EXCLUDE_FOOTNOTES = exclude_footnotes_opt  
+TARGET_DEPTH = target_depth_opt
+
+
+# ==========================================
+# PC 소스 원본 코어 로직 시작 (수정 절대 없음)
+# ==========================================
+# 정규표현식 사전 컴파일
 CLEAN_PATTERN = re.compile(r'[^a-zA-Z0-9가-힣]')
 TOC_PATTERN = re.compile(r'(.+?)\s*[\.·]{3,}\s*(\d+)')
 
@@ -35,13 +58,9 @@ PREFIX_STRIP_PATTERN = re.compile(rf'^\s*(Chapter\s*\d+|Section\s*\d+|제\s*\d+\
 KOR_CHARS = list(KOR_IDX)
 KOR_MAP = {k: v + 1 for v, k in enumerate(KOR_CHARS)}
 
-# ==========================================
-# 코어 클래스 및 헬퍼 함수 (초기 소스 원본)
-# ==========================================
 class PageCache:
-    def __init__(self, doc, exclude_footnotes=False):
+    def __init__(self, doc):
         self.doc = doc
-        self.exclude_footnotes = exclude_footnotes
         self.text_cache = {}
         self.dict_cache = {}
         self.blocks_cache = {}
@@ -101,7 +120,7 @@ class PageCache:
                 for l in b.get("lines", []):
                     line_rect = fitz.Rect(l["bbox"])
                     
-                    if self.exclude_footnotes and line_rect.y0 > page_height * 0.85:
+                    if EXCLUDE_FOOTNOTES and line_rect.y0 > page_height * 0.85:
                         temp_text = "".join([s.get("text", "") for s in l.get("spans", [])]).strip()
                         if re.match(r'^\s*[1-9]\d*[\)\.]', temp_text):
                             continue
@@ -329,22 +348,33 @@ def get_parent_1depth(p_idx, y0, items):
                 return CLEAN_PATTERN.sub('', item['title'].replace('[점검] ', '')) or str(item['toc_idx'])
     return None
 
-# ==========================================
-# 통합 프로세스 로직 (초기 원본 완벽 복원)
-# ==========================================
-def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, log_cb):
+# Web UI 출력을 위해 원본 코드 내의 print 문을 Streamlit으로 리다이렉트 처리
+log_placeholder = st.empty()
+log_messages = []
+def custom_print(*args, **kwargs):
+    msg = " ".join(map(str, args))
+    log_messages.append(msg)
+    if log_placeholder:
+        log_placeholder.code('\n'.join(log_messages), language="text")
+
+# 원본의 로직 변경 없이 결과 TOC 배열만 반환하도록 한 줄만 추가 (UI 연동용)
+def create_bookmarks_final(input_path, output_path):
+    global print
+    original_print = print
+    print = custom_print  # 터미널 출력을 웹 화면으로 후킹
     
-    # 웹 옵션 값을 로직 내 전역변수로 매핑
-    MAX_DEPTH = max_depth
-    SCAN_MODE = scan_mode
-    
+    if not os.path.exists(input_path):
+        print(f"오류: {input_path} 파일을 찾을 수 없습니다.")
+        return
+
     with fitz.open(input_path) as doc:
         total_pages = len(doc)
-        log_cb(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {MAX_DEPTH}-depth 수동 적용")
+        MAX_DEPTH = TARGET_DEPTH
+        print(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {MAX_DEPTH}-depth 수동 적용")
         
-        cache = PageCache(doc, exclude_footnotes)
+        cache = PageCache(doc)
 
-        log_cb("1. 국문 목차 페이지 전용 탐색 중...")
+        print("1. 국문 목차 페이지 전용 탐색 중...")
         toc_text = ""
         toc_page_idx = -1
         
@@ -362,12 +392,12 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             if is_eng: continue
             if is_kor:
                 toc_page_idx = i
-                log_cb(f"  -> {i + 1}p에서 국문 목차를 성공적으로 찾았습니다.")
+                print(f"  -> {i + 1}p에서 국문 목차를 성공적으로 찾았습니다.")
                 break
 
         if toc_page_idx == -1:
-            log_cb("국문 목차를 찾을 수 없어 종료합니다.")
-            return None
+            print("국문 목차를 찾을 수 없어 종료합니다.")
+            return []
             
         toc_end_idx = toc_page_idx
         for i in range(toc_page_idx, min(toc_page_idx + 8, total_pages)):
@@ -415,7 +445,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     
             toc_bookmarks.append((title, p_num))
 
-        log_cb("2. 본문 좌표 추적 및 1-2-3 depth 상하 범주 유효성 통제 중...")
+        print("\n2. 본문 좌표 추적 및 1-2-3 depth 상하 범주 유효성 통제 중...")
         offset = 0
         for title, printed_page in toc_bookmarks:
             for p_idx in range(toc_end_idx + 1, total_pages):
@@ -499,7 +529,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 lvl = item['level']
                 global_ref_fonts[lvl] = max(global_ref_fonts.get(lvl, 0.0), item['f_size'])
 
-        log_cb("3. 유령 항목(제출문, 요약서, 참고문헌 등) 전체 본문 스캔 및 구출 중...")
+        print("\n3. 유령 항목(제출문, 요약서, 참고문헌 등) 전체 본문 스캔 및 구출 중...")
         existing_titles = [CLEAN_PATTERN.sub('', re.sub(r'^[0-9가-하]+[\.\)]?\s*', '', p['title'].replace('[점검] ', ''))).lower() for p in resolved_items if not p['is_failed']]
         ghost_rules = [
             (re.compile(r'제\s*출\s*문'), '제출문'), (re.compile(r'보\s*고\s*서\s*요\s*약\s*서|요\s*약\s*서'), '요약서'),
@@ -540,7 +570,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         found_ghosts.add(display_text)
                         break
 
-        log_cb("4. 문법 꼬리 자르기 및 이중 폰트 크기(글로벌/로컬) 가비지 필터링 가동 중...")
+        print("\n4. 문법 꼬리 자르기 및 이중 폰트 크기(글로벌/로컬) 가비지 필터링 가동 중...")
         resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x['toc_idx']))
         
         active_fonts = {1: 0.0, 2: 0.0, 3: 0.0}
@@ -652,7 +682,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x['toc_idx']))
 
-        log_cb("5. [핵심 방어선] 동일 그룹 내 기호 종류(Type) 영구 잠금 및 가짜 패턴 숙청 중...")
+        print("\n5. [핵심 방어선] 동일 그룹 내 기호 종류(Type) 영구 잠금 및 가짜 패턴 숙청 중...")
         valid_items = []
         current_seq_trackers = {} 
 
@@ -714,7 +744,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         resolved_items = valid_items
 
         if SCAN_MODE == "FULL_SCAN":
-            log_cb(f"6. [순서 검증] {MAX_DEPTH}-depth 누락 항목 1번부터 강제 역추적 복원 중...")
+            print(f"\n6. [순서 검증] {MAX_DEPTH}-depth 누락 항목 1번부터 강제 역추적 복원 중...")
             recovered_items, seq_trackers = [], {}
             current_1depth_page = 0
             current_1depth_y0 = 0.0
@@ -775,9 +805,9 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             
             resolved_items.extend(recovered_items)
         else:
-            log_cb(f"6. [순서 검증] 생략 (TOC_BASED 모드 설정됨)")
+            print(f"\n6. [순서 검증] 생략 (TOC_BASED 모드 설정됨)")
 
-        log_cb("7. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
+        print("\n7. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
         
         filtered_items = []
         seen_ghosts = set()
@@ -852,28 +882,19 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         new_toc.append([1, "끝페이지", total_pages, {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, 0)}])
         doc.set_toc(new_toc)
         doc.save(output_path)
-        log_cb("✨ 성공적으로 PDF 책갈피 생성이 완료되었습니다.")
-        
-        return new_toc
+    
+    print("\n✨ 성공적으로 PDF 책갈피 생성이 완료되었습니다.")
+    
+    # UI 출력을 위해 추출된 목차 객체 반환
+    return new_toc
+
+# 원래의 print 내장함수 복구
+print = original_print
 
 
 # ==========================================
-# Streamlit 웹 UI 구현 (미리보기 배제 & 점검 붉은색)
+# 파일 처리 및 다운로드 UI 블록
 # ==========================================
-st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
-
-st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
-st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
-
-# 사이드바: 실행 옵션 (로컬과 동일하게 작동하도록 값 전달)
-st.sidebar.header("⚙️ 실행 옵션 설정")
-scan_mode_opt = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0, help="FULL_SCAN: 본문까지 정밀 탐색하여 누락 복원 / TOC_BASED: 목차 페이지 위주로 스캔")
-exclude_footnotes_opt = st.sidebar.checkbox("2. 하단 각주(Footnote) 강제 배제", value=False)
-target_depth_opt = st.sidebar.number_input("3. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=3, step=1)
-
-# 메인 화면: 파일 업로드
-uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
-
 if uploaded_file is not None:
     if st.button("🚀 책갈피 생성 시작", type="primary"):
         # 임시 파일 경로 설정
@@ -884,22 +905,10 @@ if uploaded_file is not None:
         tmp_out_path = tmp_in_path.replace(".pdf", "_bookmarked.pdf")
         
         st.markdown("### 🔄 진행 현황")
-        log_placeholder = st.empty()
-        log_messages = []
         
-        def update_log(msg):
-            log_messages.append(msg)
-            log_placeholder.code('\n'.join(log_messages), language="text")
-            
         with st.spinner("PDF를 분석하고 책갈피를 생성 중입니다..."):
-            extracted_toc = process_pdf_bookmarks(
-                input_path=tmp_in_path,
-                output_path=tmp_out_path,
-                scan_mode=scan_mode_opt,
-                exclude_footnotes=exclude_footnotes_opt,
-                max_depth=target_depth_opt,
-                log_cb=update_log
-            )
+            # 여기서 PC 버전과 완전히 동일한 함수 호출
+            extracted_toc = create_bookmarks_final(tmp_in_path, tmp_out_path)
             
         if extracted_toc:
             st.success("✅ 작업이 완료되었습니다! 아래에서 결과를 확인하고 다운로드하세요.")
