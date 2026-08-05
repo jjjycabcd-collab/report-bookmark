@@ -7,7 +7,7 @@ import unicodedata
 import tempfile
 
 # ==========================================
-# [스트림릿 로깅 클래스] (기존 print 문을 웹 화면으로 출력)
+# [스트림릿 로깅 클래스]
 # ==========================================
 class StreamlitLogger:
     def __init__(self):
@@ -23,7 +23,7 @@ class StreamlitLogger:
 # 정규표현식 및 상수 사전 컴파일
 # ==========================================
 CLEAN_PATTERN = re.compile(r'[^a-zA-Z0-9가-힣]')
-TOC_PATTERN = re.compile(r'(.+?)\s*[\.·]{3,}\s*(\d+)')
+TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MULTILINE)
 
 KOR_IDX = "가나다라마바사아자차카타파하"
 
@@ -49,7 +49,7 @@ KOR_CHARS = list(KOR_IDX)
 KOR_MAP = {k: v + 1 for v, k in enumerate(KOR_CHARS)}
 
 # ==========================================
-# 코어 클래스 및 헬퍼 함수 (PC 버전 원본 100% 동일)
+# 코어 클래스 및 헬퍼 함수
 # ==========================================
 class PageCache:
     def __init__(self, doc, exclude_footnotes=False):
@@ -80,12 +80,9 @@ class PageCache:
         if p_idx not in self.exclude_bboxes_cache:
             page = self.doc[p_idx]
             bboxes = []
-            
-            # 오직 행/열 3개 이상의 '진짜 빽빽한 데이터 표'만 안전하게 배제
             for t in page.find_tables():
                 if t.row_count >= 3 or t.col_count >= 3:
                     bboxes.append(fitz.Rect(t.bbox))
-                    
             self.exclude_bboxes_cache[p_idx] = bboxes
         return self.exclude_bboxes_cache[p_idx]
 
@@ -144,7 +141,6 @@ class PageCache:
 
 def fix_broken_characters(text):
     if not text: return text
-    # 한글 NFD(자모분리)를 NFC(정상결합)로 강제 정규화
     text = unicodedata.normalize('NFC', text)
     text = text.replace('\uf85e', '·').replace('獜', '·')      
     return re.sub(r'(?<=[가-힣])[^\s가-힣\x20-\x7E·]+(?=[가-힣])', '·', text)
@@ -202,7 +198,6 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1):
     core_length = max(5, int(len(toc_clean) * 0.6))
     toc_core = toc_clean[:core_length]
     
-    # 1단계: 라인 단위 정밀 매칭
     for b in dict_data.get("blocks", []):
         if b.get("type") != 0: continue
         for l in b.get("lines", []):
@@ -226,7 +221,6 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1):
                 if ratio >= 0.75:
                     return l["bbox"][1], max_size
                     
-    # 2단계: 블록 단위 융합(Fallback) 매칭
     for b in dict_data.get("blocks", []):
         if b.get("type") != 0: continue
         block_text = ""
@@ -350,11 +344,11 @@ def get_parent_1depth(p_idx, y0, items):
     return None
 
 # ==========================================
-# 통합 프로세스 로직 (PC 버전 원본 100% 동일 구조)
+# 통합 프로세스 로직
 # ==========================================
-def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, st_logger):
+# [수정] 파라미터에 fallback_1depth 옵션 추가
+def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, fallback_1depth, st_logger):
     
-    # 웹 UI 설정값을 로직 내 글로벌 상수처럼 매핑
     MAX_DEPTH = max_depth
     SCAN_MODE = scan_mode
     
@@ -378,7 +372,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 if not clean_text: continue
                 if "CONTENTS" in text_upper or "영문목차" in clean_text: is_eng = True
                 
-                # [수정 2] 가짜 목차 페이지(TOC) 오인 방지를 위해 단어 검사를 엄격하게 조임
                 if clean_text in ["목차", "차례", "contents"] or re.search(r'<\s*목\s*차\s*>', text_upper):
                     is_kor = True
                     
@@ -405,7 +398,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             else: break
 
         raw_items = []
-        # 다중 라인 매칭을 위해 전체 텍스트를 대상으로 정규식 수행
         for match in TOC_PATTERN.finditer(toc_text):
             title = fix_broken_characters(re.sub(r'^[\s]+', '', match.group(1).strip()).replace("목차", "").strip())
             if "저자소개" in CLEAN_PATTERN.sub('', title): continue
@@ -499,8 +491,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 elif level == 2:
                     last_2depth_coord = (found_page, found_y0)
             else:
-                # [수정 3] 미발견 앵커의 상속 좌표 오류 수정. 
-                # 이전 상속값을 이어받아 하위 목차들의 Boundary를 박살내지 않도록 y0를 0.0으로 초기화
                 found_page, found_y0, seq_y0 = seq_page, 0.0, 0.0
                 if level == 1: last_1depth_coord = (found_page, 0.0)
                 elif level == 2: last_2depth_coord = (found_page, 0.0)
@@ -802,8 +792,30 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     seq_trackers[seq_type] = {'level': item['level'], 'last_num': seq_num, 'last_page': item['page_idx'], 'last_y0': item['y0']}
             
             resolved_items.extend(recovered_items)
+            resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x['toc_idx'])) # 정렬 재수행
         else:
             st_logger.print(f"\n6. [순서 검증] 생략 (TOC_BASED 모드 설정됨)")
+
+        ########## [추가 로직] 1-depth 누락 시 하위(2-depth) 페이지로 강제 연결 (Fallback) ##########
+        if fallback_1depth:
+            st_logger.print("\n[옵션 적용] 미발견 1-depth 항목을 하위(2-depth) 목차 페이지로 강제 연결 중...")
+            for i in range(len(resolved_items) - 1):
+                current_item = resolved_items[i]
+                next_item = resolved_items[i + 1]
+                
+                # 현재 항목이 1-depth 이고, 매칭에 실패([점검] 상태) 했을 때
+                if current_item['level'] == 1 and current_item.get('is_failed', False):
+                    # 바로 다음 항목이 2-depth 이고, 정상적으로 본문 매칭에 성공했다면
+                    if next_item['level'] == 2 and not next_item.get('is_failed', False):
+                        # 1-depth의 페이지를 2-depth의 페이지로 강제 복사하고 y좌표는 상단(0.0)으로 설정
+                        current_item['page_idx'] = next_item['page_idx']
+                        current_item['y0'] = 0.0  
+                        current_item['is_failed'] = False
+                        
+                        # 화면 표시용 [점검] 태그 제거
+                        if '[점검]' in current_item['title']:
+                            current_item['title'] = current_item['title'].replace('[점검] ', '')
+        ######################################################################################
 
         st_logger.print("\n[메타데이터] 문서 내용 기반 자료유형 자동 분류 및 매핑 중...")
         doc_type = classify_document_type(cache, total_pages)
@@ -881,12 +893,13 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             
             new_toc.append([target_level, item['title'], item['page_idx'] + 1, dest_dict])
             prev_level = target_level
+            st_logger.print(f"{'  ' * (target_level - 1)}└── [{target_level}-depth] {item['title']} ({item['page_idx'] + 1}p)")
 
         new_toc.append([1, "끝페이지", total_pages, {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, 0)}])
         doc.set_toc(new_toc)
         doc.save(output_path)
 
-    st_logger.print("\n✨ 성공! 가짜 목차 페이지 판별 오류를 차단하고 숨어있던 2-depth 항목들을 무사히 구출했습니다.")
+    st_logger.print("\n✨ 성공! 책갈피 생성이 완료되었습니다.")
     return new_toc
 
 
@@ -898,11 +911,12 @@ st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
-# 사이드바: 실행 옵션을 전역 변수에 매핑
+# 사이드바: 실행 옵션 추가
 st.sidebar.header("⚙️ 실행 옵션 설정")
 SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0)
 EXCLUDE_FOOTNOTES = st.sidebar.checkbox("2. 하단 각주(Footnote) 강제 배제", value=False)
 TARGET_DEPTH = st.sidebar.number_input("3. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
+FALLBACK_1DEPTH = st.sidebar.checkbox("4. 1-depth 누락 시 하위(2-depth) 강제 연결", value=False, help="표 안의 텍스트 분리 등으로 1-depth 본문 매칭이 실패할 경우, 바로 아래 2-depth 항목이 위치한 페이지 최상단으로 1-depth를 연결합니다.")
 
 uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
 
@@ -924,6 +938,7 @@ if uploaded_file is not None:
                 scan_mode=SCAN_MODE,
                 exclude_footnotes=EXCLUDE_FOOTNOTES,
                 max_depth=TARGET_DEPTH,
+                fallback_1depth=FALLBACK_1DEPTH, # 새로 추가한 옵션 파라미터 전달
                 st_logger=st_logger
             )
             
