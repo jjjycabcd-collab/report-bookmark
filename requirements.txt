@@ -1,2 +1,3 @@
 streamlit
 PyMuPDF
+fastapi>=0.100.0
