@@ -1,12 +1,10 @@
 import streamlit as st
-import streamlit.components.v1 as components  # PDF 독립 렌더링을 위한 컴포넌트 추가
 import fitz  # PyMuPDF
 import re
 import os
 import difflib
 import unicodedata
 import tempfile
-import base64
 
 # ==========================================
 # 정규표현식 및 상수 사전 컴파일
@@ -38,7 +36,7 @@ KOR_CHARS = list(KOR_IDX)
 KOR_MAP = {k: v + 1 for v, k in enumerate(KOR_CHARS)}
 
 # ==========================================
-# 코어 클래스 및 함수
+# 코어 클래스 및 헬퍼 함수 (초기 소스 원본)
 # ==========================================
 class PageCache:
     def __init__(self, doc, exclude_footnotes=False):
@@ -119,7 +117,12 @@ class PageCache:
                             
                     text = fix_broken_characters(text.strip())
                     if text:
-                        lines_data.append({'text': text, 'y0': l["bbox"][1], 'max_size': max_size, 'is_desc': is_desc})
+                        lines_data.append({
+                            'text': text,
+                            'y0': l["bbox"][1],
+                            'max_size': max_size,
+                            'is_desc': is_desc
+                        })
             self.valid_lines_cache[p_idx] = lines_data
         return self.valid_lines_cache[p_idx]
 
@@ -134,6 +137,7 @@ def extract_prefix(t):
     m = re.match(r'^\s*(<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?)', t)
     if m:
         return m.group(1).replace('<', '').replace('>', '').replace('[', '').replace(']', '').replace(' ', '')
+        
     m = re.match(rf'^\s*(제\s*\d+\s*[장절]|[1-9]\d*(?:\.\d+)+|[{KOR_IDX}][-\.]\d+|[1-9]\d*(?:-\d+)+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\.\)）]|[1-9]\d*[\.\)）]|[A-Z][\.\)]|[1-9]\d*(?=\s+[가-힣a-zA-Z]))', t)
     if m: return re.sub(r'\s+', '', m.group(1))
     return None
@@ -143,16 +147,20 @@ def is_ghost_title(clean_t):
     for g in ['제출문', '요약서', '요약문', 'summary', 'contents', '표지', '목차', '참고문헌']:
         if g in clean_t and len(clean_t) <= len(g) + 8:
             return True
-        if g == '요약문' and '요약문' in clean_t: return True
+        if g == '요약문' and '요약문' in clean_t:
+            return True
     return False
 
 def is_restricted_1depth(clean_title):
     if not clean_title: return False
     clean_title = clean_title.lower()
     for g in ['표지', '제출문', '요약서', '요약문', 'summary', 'contents', '목차', '참고문헌']:
-        if g in clean_title and len(clean_title) <= len(g) + 12: return True
-        if g == '요약문' and '요약문' in clean_title: return True
-    if re.match(r'^\d*(붙임|별첨|부록)', clean_title): return True
+        if g in clean_title and len(clean_title) <= len(g) + 12:
+            return True
+        if g == '요약문' and '요약문' in clean_title:
+            return True
+    if re.match(r'^\d*(붙임|별첨|부록)', clean_title):
+        return True
     return False
 
 def is_3depth_in_jang(title):
@@ -166,7 +174,9 @@ def is_3depth_in_jang(title):
 
 def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1):
     if p_idx <= toc_end_idx: return None, 0.0 
+    
     dict_data = cache.get_dict(p_idx)
+    
     toc_body = PREFIX_STRIP_PATTERN.sub('', toc_title).strip()
     toc_clean = CLEAN_PATTERN.sub('', toc_body)
     if not toc_clean: toc_clean = CLEAN_PATTERN.sub('', toc_title)
@@ -186,6 +196,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1):
                 if s.get("size", 0.0) > max_size: max_size = s.get("size", 0.0)
             
             text = fix_broken_characters(text.strip())
+            
             text_body = PREFIX_STRIP_PATTERN.sub('', text).strip()
             text_clean = CLEAN_PATTERN.sub('', text_body)
             if not text_clean: text_clean = CLEAN_PATTERN.sub('', text)
@@ -193,12 +204,15 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1):
             if toc_core in text_clean and len(text_clean) <= len(toc_clean) + 15:
                 return l["bbox"][1], max_size
             if len(toc_clean) - 5 <= len(text_clean) <= len(toc_clean) + 20:
-                if difflib.SequenceMatcher(None, toc_clean, text_clean[:len(toc_clean) + 5]).ratio() >= 0.75:
+                ratio = difflib.SequenceMatcher(None, toc_clean, text_clean[:len(toc_clean) + 5]).ratio()
+                if ratio >= 0.75:
                     return l["bbox"][1], max_size
                     
     for b in dict_data.get("blocks", []):
         if b.get("type") != 0: continue
-        block_text, min_y0, max_size = "", 9999.0, 0.0
+        block_text = ""
+        min_y0 = 9999.0
+        max_size = 0.0
         for l in b.get("lines", []):
             if l["bbox"][1] < min_y0: min_y0 = l["bbox"][1]
             for s in l.get("spans", []):
@@ -219,22 +233,34 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
     t = title.strip()
     clean_t = CLEAN_PATTERN.sub('', t)
     
-    if re.match(r'^제\s*\d+\s*장', t) or re.match(r'^<?\[?(붙임|별첨|부록)', t) or is_ghost_title(clean_t): return 1
+    if re.match(r'^제\s*\d+\s*장', t): return 1
+    if re.match(r'^<?\[?(붙임|별첨|부록)', t): return 1
+    if is_ghost_title(clean_t): return 1
     
     if has_jang:
         if re.match(r'^제\s*\d+\s*절', t): return 2
         if max_depth >= 3 and is_3depth_in_jang(t): return 3
         return 99 
         
-    if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+[\.\)]?', t): return 3
-    if max_depth >= 3 and (re.match(r'^[1-9]\d*[\)）](?:\s+|$)', t) or re.match(r'^\([1-9]\d*\)(?:\s+|$)', t)): return 3
+    if re.match(r'^[1-9]\d*\.\d+\.\d+', t): return 3
+    if re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t): return 3
+    if re.match(rf'^[{KOR_IDX}]-\d+[\.\)]?', t): return 3
     
-    if re.match(r'^제\s*\d+\s*절', t) or re.match(r'^[1-9]\d*\.\d+[\.\s]?', t) or re.match(r'^[1-9]\d*-\d+[\.\)]?', t) or re.match(r'^[A-Z][\.\)]\s*', t): return 2 
+    if max_depth >= 3:
+        if re.match(r'^[1-9]\d*[\)）](?:\s+|$)', t): return 3
+        if re.match(r'^\([1-9]\d*\)(?:\s+|$)', t): return 3
+    
+    if re.match(r'^제\s*\d+\s*절', t): return 2
+    if re.match(r'^[1-9]\d*\.\d+[\.\s]?', t): return 2 
+    if re.match(r'^[1-9]\d*-\d+[\.\)]?', t): return 2 
+    if re.match(r'^[A-Z][\.\)]\s*', t): return 2 
     
     if re.match(r'^[1-9]\d*\.(?:\s+|$)', t) or re.match(r'^[1-9]\d*\s+[가-힣a-zA-Z]', t):
         if font_size > 0.0 and font_trackers is not None:
-            if font_trackers.get('depth1', 0.0) == 0.0: font_trackers['depth1'] = font_size
-            elif font_size <= font_trackers['depth1'] - 0.8: return 2
+            if font_trackers.get('depth1', 0.0) == 0.0:
+                font_trackers['depth1'] = font_size
+            elif font_size <= font_trackers['depth1'] - 0.8:
+                return 2
         return 1
     return 2
 
@@ -242,30 +268,43 @@ def get_seq_info(title):
     t = title.strip()
     m = re.match(r'^([1-9]\d*(?:\.\d+)*)\s*\.\s*([1-9]\d*)[\.\)]?(?:\s*|$)', t)
     if m: return (f"num_dot_sub_{m.group(1).replace('.', '_')}", int(m.group(2)))
+    
     m = re.match(r'^([1-9]\d*(?:-\d+)*)\s*-\s*([1-9]\d*)[\.\)]?(?:\s*|$)', t)
     if m: return (f"num_dash_sub_{m.group(1).replace('-', '_')}", int(m.group(2)))
+    
     m = re.match(r'^제?\s*([1-9]\d*)\s*절(?:\s*|$)', t)
     if m: return ('num_jeol', int(m.group(1)))
+    
     m = re.match(r'^\(\s*([1-9]\d*)\s*\)(?:\s*|$)', t)
     if m: return ('num_paren_both', int(m.group(1)))
+    
     m = re.match(r'^([1-9]\d*)\s*[\)）](?:\s*|$)', t)
     if m: return ('num_paren_right', int(m.group(1)))
+    
     m = re.match(rf'^([{KOR_IDX}])\s*\.(?:\s*|$)', t)
     if m: return ('kor_dot', KOR_MAP.get(m.group(1)))
+    
     m = re.match(rf'^([{KOR_IDX}])\s*[\)）](?:\s*|$)', t)
     if m: return ('kor_paren_right', KOR_MAP.get(m.group(1)))
+    
     m = re.match(rf'^\(\s*([{KOR_IDX}])\s*\)(?:\s*|$)', t)
     if m: return ('kor_paren_both', KOR_MAP.get(m.group(1)))
+    
     m = re.match(r'^([1-9]\d*)\s*\.(?:\s*|$)', t)
     if m: return ('num_dot', int(m.group(1)))
+    
     m = re.match(r'^([A-Z])[\.\)](?:\s*|$)', t)
     if m: return ('alpha_dot', ord(m.group(1).upper()) - 64)
+    
     return (None, None)
 
 def make_prefix(seq_type, num):
     if not num: return None
-    if seq_type.startswith('num_dot_sub_'): return f"{seq_type[12:].replace('_', '.')}.{num}"
-    if seq_type.startswith('num_dash_sub_'): return f"{seq_type[13:].replace('_', '-')}-{num}"
+    if seq_type.startswith('num_dot_sub_'):
+        return f"{seq_type[12:].replace('_', '.')}.{num}"
+    if seq_type.startswith('num_dash_sub_'):
+        return f"{seq_type[13:].replace('_', '-')}-{num}"
+        
     if seq_type == 'alpha_dot': return f"{chr(num + 64)}." 
     if num > len(KOR_CHARS): return None
     if seq_type == 'num_jeol': return f"제{num}절"
@@ -285,12 +324,12 @@ def get_parent_1depth(p_idx, y0, items):
     return None
 
 # ==========================================
-# 통합 프로세스 로직
+# 통합 프로세스 로직 (초기 원본 복구)
 # ==========================================
 def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, log_cb):
     with fitz.open(input_path) as doc:
         total_pages = len(doc)
-        log_cb(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {max_depth}-depth")
+        log_cb(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {max_depth}-depth 수동 적용")
         
         cache = PageCache(doc, exclude_footnotes)
 
@@ -301,12 +340,14 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         for i in range(min(30, total_pages)):
             blocks = sorted(cache.get_blocks(i), key=lambda b: b[1])
             is_eng = is_kor = False
+            
             for b in blocks[:20]:
                 text_upper = b[4].strip().upper()
                 clean_text = CLEAN_PATTERN.sub('', text_upper)
                 if not clean_text: continue
                 if "CONTENTS" in text_upper or "영문목차" in clean_text: is_eng = True
                 if ("목차" in clean_text or "차례" in clean_text) and not any(x in clean_text for x in ["표목차", "그림목차", "영문목차"]): is_kor = True
+                    
             if is_eng: continue
             if is_kor:
                 toc_page_idx = i
@@ -314,7 +355,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 break
 
         if toc_page_idx == -1:
-            log_cb("국문 목차를 찾을 수 없어 조기 종료합니다.")
+            log_cb("국문 목차를 찾을 수 없어 종료합니다.")
             return None
             
         toc_end_idx = toc_page_idx
@@ -323,6 +364,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             if i > toc_page_idx:
                 header_text = page_text[:200].upper()
                 if "CONTENTS" in header_text or "영문목차" in CLEAN_PATTERN.sub('', header_text): break 
+                
             if i == toc_page_idx or len(re.findall(r'[\.·]{3,}', page_text)) >= 2 or re.search(r'<\s*목\s*차\s*>', page_text):
                 toc_text += page_text + "\n"
                 toc_end_idx = i 
@@ -337,7 +379,9 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 raw_items.append((title, int(match.group(2))))
 
         has_jang = any(re.match(r'^제\s*\d+\s*장', re.sub(r'\s+', '', t[0])) for t in raw_items)
-        if not has_jang and re.search(r'제\s*\d+\s*장', re.sub(r'\s+', '', toc_text)): has_jang = True
+        if not has_jang and re.search(r'제\s*\d+\s*장', re.sub(r'\s+', '', toc_text)):
+            has_jang = True
+            
         has_korean_toc = any(re.search(r'[가-힣]', t[0]) for t in raw_items)
         
         toc_bookmarks = []
@@ -353,13 +397,14 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 is_jeol = bool(re.match(r'^제\d+절', re.sub(r'\s+', '', title)))
                 is_butim = bool(re.match(r'^<?\[?(붙임|별첨|부록)', title))
                 is_ghost = is_ghost_title(CLEAN_PATTERN.sub('', title))
+                
                 is_valid = is_jang or is_jeol or is_butim or is_ghost
                 if max_depth >= 3 and is_3depth_in_jang(title): is_valid = True
                 if not is_valid: continue
                     
             toc_bookmarks.append((title, p_num))
 
-        log_cb("2. 본문 좌표 추적 및 1-2-3 depth 상하 범주 유효성 통제 중...")
+        log_cb("\n2. 본문 좌표 추적 및 1-2-3 depth 상하 범주 유효성 통제 중...")
         offset = 0
         for title, printed_page in toc_bookmarks:
             for p_idx in range(toc_end_idx + 1, total_pages):
@@ -371,6 +416,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         resolved_items = []
         created_titles = set()
+        
         last_success_page_idx, seq_page, seq_y0 = toc_end_idx + 1, toc_end_idx + 1, 0.0
         last_1depth_coord = (-1, -1)  
         last_2depth_coord = (-1, -1)
@@ -384,8 +430,11 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             found, found_page, found_y0, found_f_size = False, target_page_idx, 0.0, 0.0
 
             min_page, min_y0 = -1, -1
-            if level == 3 and last_2depth_coord[0] != -1: min_page, min_y0 = last_2depth_coord
-            elif level in [2, 3] and last_1depth_coord[0] != -1: min_page, min_y0 = last_1depth_coord
+            if level == 3 and last_2depth_coord[0] != -1:
+                min_page, min_y0 = last_2depth_coord
+            elif level in [2, 3] and last_1depth_coord[0] != -1:
+                min_page, min_y0 = last_1depth_coord
+                
             strict_seq_page, strict_seq_y0 = seq_page, seq_y0
 
             for local_offset in [0, -1, 1, -2, 2]:
@@ -410,13 +459,19 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             if found: 
                 last_success_page_idx, seq_page, seq_y0 = found_page, found_page, found_y0
                 if level == 1: 
-                    last_1depth_coord, last_2depth_coord = (found_page, found_y0), (-1, -1)
-                elif level == 2: last_2depth_coord = (found_page, found_y0)
+                    last_1depth_coord = (found_page, found_y0)
+                    last_2depth_coord = (-1, -1)
+                elif level == 2:
+                    last_2depth_coord = (found_page, found_y0)
             else:
                 found_page, found_y0, seq_y0 = seq_page, seq_y0 + 0.0001, seq_y0 + 0.0001
             
             final_level = determine_level(title, has_jang, font_size=found_f_size, is_body_scan=False, max_depth=max_depth) if found else level
-            resolved_items.append({'toc_idx': toc_idx, 'title': title if found else f"[점검] {title}", 'page_idx': found_page, 'y0': found_y0, 'f_size': found_f_size, 'level': final_level, 'is_failed': not found, 'body_matched': found})
+            resolved_items.append({
+                'toc_idx': toc_idx, 'title': title if found else f"[점검] {title}", 'page_idx': found_page, 
+                'y0': found_y0, 'f_size': found_f_size, 'level': final_level,
+                'is_failed': not found, 'body_matched': found
+            })
             created_titles.add(clean_t)
 
         max_1depth_size = 0.0
@@ -426,13 +481,14 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     max_1depth_size = max(max_1depth_size, item['f_size'])
         
         global_font_trackers = {'depth1': max_1depth_size}
+        
         global_ref_fonts = {1: 0.0, 2: 0.0, 3: 0.0}
         for item in resolved_items:
             if not item.get('is_failed', False) and item.get('f_size', 0.0) > 0:
                 lvl = item['level']
                 global_ref_fonts[lvl] = max(global_ref_fonts.get(lvl, 0.0), item['f_size'])
 
-        log_cb("3. 유령 항목(제출문, 요약서, 참고문헌 등) 전체 본문 스캔 및 구출 중...")
+        log_cb("\n3. 유령 항목(제출문, 요약서, 참고문헌 등) 전체 본문 스캔 및 구출 중...")
         existing_titles = [CLEAN_PATTERN.sub('', re.sub(r'^[0-9가-하]+[\.\)]?\s*', '', p['title'].replace('[점검] ', ''))).lower() for p in resolved_items if not p['is_failed']]
         ghost_rules = [
             (re.compile(r'제\s*출\s*문'), '제출문'), (re.compile(r'보\s*고\s*서\s*요\s*약\s*서|요\s*약\s*서'), '요약서'),
@@ -452,11 +508,17 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         for item in resolved_items:
                             if item['is_failed'] and item['level'] == 1:
                                 raw_title = item['title'].replace('[점검] ', '').strip()
-                                if re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title): continue
+                                if re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title):
+                                    continue
+                                    
                                 clean_title = CLEAN_PATTERN.sub('', item['title']).lower()
                                 if display_text.lower() in clean_title or "요약" in clean_title:
-                                    item.update({'page_idx': p_idx, 'y0': b[1], 'is_failed': False, 'body_matched': True})
-                                    if '[점검]' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
+                                    item['page_idx'] = p_idx
+                                    item['y0'] = b[1]
+                                    item['is_failed'] = False
+                                    item['body_matched'] = True
+                                    if '[점검]' in item['title']:
+                                        item['title'] = item['title'].replace('[점검] ', '')
                                     rescued = True
                                     break
                         if not rescued:
@@ -467,8 +529,9 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         found_ghosts.add(display_text)
                         break
 
-        log_cb("4. 문법 꼬리 자르기 및 이중 폰트 크기 가비지 필터링 가동 중...")
+        log_cb("\n4. 문법 꼬리 자르기 및 이중 폰트 크기(글로벌/로컬) 가비지 필터링 가동 중...")
         resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x['toc_idx']))
+        
         active_fonts = {1: 0.0, 2: 0.0, 3: 0.0}
         
         for p_idx in range(toc_end_idx + 1, total_pages):
@@ -480,99 +543,176 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     if prefix_str:
                         rest_text = text[text.find(prefix_str) + len(prefix_str):].lstrip()
                         if re.match(r'^(?:%|%p|배|초|원|건|명|개|단계|년|월|일|회|종)(?:\s+|[^\w]|$)', rest_text): continue
-                    if any(fs in text for fs in ["이 보고서는", "발표하는 때에는", "국가과학기술기밀"]) or re.search(r'(습니다|입니다|합니다|됩니다|바랍니다|시오|세요|한다|된다|이다|있다|없다|같다|기대된다|판단된다|보인다)\.?\s*$', text) or re.search(r'(습니다|입니다|합니다|됩니다|한다|된다|이다|있다)\.\s+[가-힣]', text): continue
+                            
+                    if any(fs in text for fs in ["이 보고서는", "발표하는 때에는", "국가과학기술기밀"]): continue
+                    
+                    if re.search(r'(습니다|입니다|합니다|됩니다|바랍니다|시오|세요|한다|된다|이다|있다|없다|같다|기대된다|판단된다|보인다)\.?\s*$', text): continue
+                    if re.search(r'(습니다|입니다|합니다|됩니다|한다|된다|이다|있다)\.\s+[가-힣]', text): continue
                     
                     if len(text) < 100 and not text.endswith(('.', '다.', '함.', '음.', '임.')):
                         if ':' in text and len(text.split(':', 1)[1]) > 15: continue
-                        if re.search(r'(을|를|는|으로|에서|부터|까지|에게|통해|대해|위해|관해|따른|인한|하는|있는|인|및|또는)\s*$', text): continue
-                        if len(text) >= 20 and re.search(r'(의|로|과|와|할|한|된|될)\s*$', text) and not re.search(r'(결과|효과|성과|교과|경로|회로|역할|총괄|분할|개요|필요성|중요성|목표|현황)\s*$', text): continue
+                        
+                        if re.search(r'(을|를|는|으로|에서|부터|까지|에게|통해|대해|위해|관해|따른|인한|하는|있는|인|및|또는)\s*$', text):
+                            continue
+                            
+                        if len(text) >= 20 and re.search(r'(의|로|과|와|할|한|된|될)\s*$', text):
+                            if not re.search(r'(결과|효과|성과|교과|경로|회로|역할|총괄|분할|개요|필요성|중요성|목표|현황)\s*$', text):
+                                continue
 
                     cand_prefix, cand_clean, is_dup = extract_prefix(text), CLEAN_PATTERN.sub('', text), False
                     cand_level_toc = determine_level(text, has_jang, font_size=max_size, font_trackers=global_font_trackers, is_body_scan=True, max_depth=max_depth)
                     if cand_level_toc == 99: continue
                     
                     cand_1depth_parent = get_parent_1depth(p_idx, y0, resolved_items)
-                    if cand_1depth_parent and is_restricted_1depth(cand_1depth_parent):
-                        if cand_level_toc in [2, 3] or (cand_level_toc == 1 and not (is_ghost_title(cand_clean) or re.match(r'^<?\[?(붙임|별첨|부록)', text.strip()) or re.match(r'^제\s*\d+\s*[장절]', text.strip()))): continue
                     
+                    if cand_1depth_parent and is_restricted_1depth(cand_1depth_parent):
+                        if cand_level_toc in [2, 3]: continue
+                        if cand_level_toc == 1:
+                            if not (is_ghost_title(cand_clean) or re.match(r'^<?\[?(붙임|별첨|부록)', text.strip()) or re.match(r'^제\s*\d+\s*[장절]', text.strip())):
+                                continue
+                        
                     for item in resolved_items:
                         if item['page_idx'] == p_idx and abs(item['y0'] - y0) < 5.0:
                             item_prefix = extract_prefix(item['title'].replace('[점검] ', ''))
-                            if cand_prefix and item_prefix and cand_prefix != item_prefix: continue 
-                            item.update({'title': text if item['level'] == cand_level_toc else item['title'], 'f_size': max(item['f_size'], max_size), 'is_failed': False, 'body_matched': True})
-                            if '점검' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
-                            is_dup = True; break
+                            if cand_prefix and item_prefix and cand_prefix != item_prefix:
+                                continue 
                                 
+                            if item['level'] != cand_level_toc:
+                                item['f_size'] = max(item['f_size'], max_size)
+                                item['is_failed'] = False
+                                item['body_matched'] = True
+                            else:
+                                item['title'] = text
+                                item['f_size'] = max(item['f_size'], max_size)
+                                item['is_failed'] = False
+                                item['body_matched'] = True
+                            if '점검' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
+                            is_dup = True
+                            break
+                                    
                     if not is_dup and cand_prefix:
                         for item in resolved_items:
-                            if item['level'] != cand_level_toc or (cand_level_toc in [2, 3] and get_parent_1depth(item['page_idx'], item['y0'], resolved_items) != cand_1depth_parent): continue 
-                            if extract_prefix(item['title'].replace('[점검] ', '')) == cand_prefix and difflib.SequenceMatcher(None, CLEAN_PATTERN.sub('', item['title'].replace('[점검] ', '')), cand_clean).ratio() > 0.40:
+                            if item['level'] != cand_level_toc: continue 
+                            if cand_level_toc in [2, 3] and get_parent_1depth(item['page_idx'], item['y0'], resolved_items) != cand_1depth_parent: continue 
+                                        
+                            item_prefix = extract_prefix(item['title'].replace('[점검] ', ''))
+                            if item_prefix == cand_prefix and difflib.SequenceMatcher(None, CLEAN_PATTERN.sub('', item['title'].replace('[점검] ', '')), cand_clean).ratio() > 0.40:
                                 item.update({'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'is_failed': False, 'body_matched': True})
                                 if '점검' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
-                                is_dup = True; break
-                                    
+                                is_dup = True
+                                break
+                                        
                     if not is_dup:
                         for x in resolved_items:
                             if x['level'] == cand_level_toc and CLEAN_PATTERN.sub('', x['title'].replace('[점검] ', '')) == cand_clean:
                                 if cand_level_toc in [2, 3] and get_parent_1depth(x['page_idx'], x['y0'], resolved_items) != cand_1depth_parent: continue
-                                is_dup = True; break
-                                
+                                is_dup = True
+                                break
+                                    
                     if is_dup:
                         active_fonts[cand_level_toc] = max(active_fonts.get(cand_level_toc, 0.0), max_size)
-                        if cand_level_toc == 1: active_fonts[2] = active_fonts[3] = 0.0
-                        elif cand_level_toc == 2: active_fonts[3] = 0.0
+                        if cand_level_toc == 1: 
+                            active_fonts[2] = 0.0; active_fonts[3] = 0.0
+                        elif cand_level_toc == 2: 
+                            active_fonts[3] = 0.0
 
                     if not is_dup and not is_desc:
                         if scan_mode == "FULL_SCAN":
                             is_valid_size = True
-                            if global_ref_fonts.get(cand_level_toc, 0.0) > 0.0 and max_size <= global_ref_fonts[cand_level_toc] - 1.5: is_valid_size = False
-                            if is_valid_size and active_fonts.get(cand_level_toc, 0.0) > 0.0 and max_size <= active_fonts[cand_level_toc] - 0.8: is_valid_size = False
-                            if not is_valid_size: continue 
+                            
+                            if global_ref_fonts.get(cand_level_toc, 0.0) > 0.0:
+                                if max_size <= global_ref_fonts[cand_level_toc] - 1.5:
+                                    is_valid_size = False
+                            
+                            if is_valid_size and active_fonts.get(cand_level_toc, 0.0) > 0.0:
+                                if max_size <= active_fonts[cand_level_toc] - 0.8:
+                                    is_valid_size = False
+                                        
+                            if not is_valid_size:
+                                continue 
 
                         resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'level': cand_level_toc, 'is_failed': False, 'body_matched': True})
+                        
                         active_fonts[cand_level_toc] = max(active_fonts.get(cand_level_toc, 0.0), max_size)
-                        if cand_level_toc == 1: active_fonts[2] = active_fonts[3] = 0.0
-                        elif cand_level_toc == 2: active_fonts[3] = 0.0
+                        if cand_level_toc == 1: 
+                            active_fonts[2] = 0.0; active_fonts[3] = 0.0
+                        elif cand_level_toc == 2: 
+                            active_fonts[3] = 0.0
 
         resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x['toc_idx']))
 
-        log_cb("5. [핵심 방어선] 동일 그룹 내 기호 종류(Type) 영구 잠금 및 가짜 패턴 숙청 중...")
-        valid_items, current_seq_trackers = [], {}
+        log_cb("\n5. [핵심 방어선] 동일 그룹 내 기호 종류(Type) 영구 잠금 및 가짜 패턴 숙청 중...")
+        valid_items = []
+        current_seq_trackers = {} 
+
         for item in resolved_items:
             if item['level'] == 99: continue
+            
             tgt_level = item['level']
+            
             if tgt_level == 1:
                 current_seq_trackers.clear()  
                 valid_items.append(item)
-            elif not item.get('is_failed', False):
-                for k in [k for k in current_seq_trackers.keys() if k > tgt_level]: del current_seq_trackers[k]
+            else:
+                if item.get('is_failed', False): 
+                    continue
+                
+                keys_to_remove = [k for k in current_seq_trackers.keys() if k > tgt_level]
+                for k in keys_to_remove: 
+                    del current_seq_trackers[k]
+                    
                 seq_type, seq_num = get_seq_info(item['title'])
+                
                 if tgt_level not in current_seq_trackers:
-                    if seq_type and seq_num is not None: current_seq_trackers[tgt_level] = {'type': seq_type, 'num': seq_num, 'locked_by_toc': item.get('toc_idx', 999) < 999}
+                    if seq_type is not None and seq_num is not None:
+                        current_seq_trackers[tgt_level] = {
+                            'type': seq_type, 
+                            'num': seq_num, 
+                            'locked_by_toc': item.get('toc_idx', 999) < 999
+                        }
                     valid_items.append(item)
                 else:
                     tracked = current_seq_trackers[tgt_level]
+                    
                     if seq_type == tracked['type'] and seq_num is not None:
                         if seq_num > tracked['num']:
                             tracked['num'] = seq_num
-                            if item.get('toc_idx', 999) < 999: tracked['locked_by_toc'] = True
+                            if item.get('toc_idx', 999) < 999:
+                                tracked['locked_by_toc'] = True
                             valid_items.append(item)
-                    elif item.get('toc_idx', 999) < 999 and not tracked.get('locked_by_toc', False):
-                        valid_items = [x for x in valid_items if not (x['level'] == tgt_level and get_seq_info(x['title'])[0] == tracked['type'] and x.get('toc_idx', 999) == 999)]
-                        current_seq_trackers[tgt_level] = {'type': seq_type, 'num': seq_num, 'locked_by_toc': True}
-                        valid_items.append(item)
+                        else:
+                            continue 
+                    else:
+                        is_current_toc = item.get('toc_idx', 999) < 999
+                        
+                        if is_current_toc and not tracked.get('locked_by_toc', False):
+                            valid_items = [x for x in valid_items if not (
+                                x['level'] == tgt_level and 
+                                get_seq_info(x['title'])[0] == tracked['type'] and 
+                                x.get('toc_idx', 999) == 999
+                            )]
+                            current_seq_trackers[tgt_level] = {
+                                'type': seq_type, 
+                                'num': seq_num, 
+                                'locked_by_toc': True
+                            }
+                            valid_items.append(item)
+                        else:
+                            continue
 
         resolved_items = valid_items
 
         if scan_mode == "FULL_SCAN":
-            log_cb(f"6. [순서 검증] {max_depth}-depth 누락 항목 1번부터 강제 역추적 복원 중...")
+            log_cb(f"\n6. [순서 검증] {max_depth}-depth 누락 항목 1번부터 강제 역추적 복원 중...")
             recovered_items, seq_trackers = [], {}
-            current_1depth_page, current_1depth_y0 = 0, 0.0
+            current_1depth_page = 0
+            current_1depth_y0 = 0.0
             
             for item in resolved_items:
                 if item['level'] == 1:
                     seq_trackers.clear()
-                    current_1depth_page, current_1depth_y0 = item['page_idx'], item['y0']
+                    current_1depth_page = item['page_idx']
+                    current_1depth_y0 = item['y0']
                 elif item['level'] in [2, 3]:
                     for k in [k for k, v in seq_trackers.items() if v['level'] > item['level']]: del seq_trackers[k]
 
@@ -580,8 +720,13 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 if seq_type and seq_num is not None:
                     if seq_type in seq_trackers:
                         last_info = seq_trackers[seq_type]
-                        expected_num, search_start_page, search_start_y0 = last_info['last_num'] + 1, last_info['last_page'], last_info['last_y0']
-                    else: expected_num, search_start_page, search_start_y0 = 1, current_1depth_page, current_1depth_y0
+                        expected_num = last_info['last_num'] + 1
+                        search_start_page = last_info['last_page']
+                        search_start_y0 = last_info['last_y0']
+                    else:
+                        expected_num = 1
+                        search_start_page = current_1depth_page
+                        search_start_y0 = current_1depth_y0
                         
                     if seq_num > expected_num:
                         for missing_num in range(expected_num, seq_num):
@@ -596,7 +741,8 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                     text = line['text']
                                     
                                     active_1depth = get_parent_1depth(search_p, line['y0'], resolved_items)
-                                    if active_1depth and is_restricted_1depth(active_1depth): continue
+                                    if active_1depth and is_restricted_1depth(active_1depth):
+                                        continue
                                         
                                     if re.match(rf'^\s*{re.escape(prefix)}(?=[가-힣a-zA-Z\s]|$)', text):
                                         prefix_str = extract_prefix(text)
@@ -607,60 +753,101 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                         for x in resolved_items + recovered_items:
                                             if x['level'] != item['level']: continue
                                             x_title = x['title'].replace('[점검] ', '')
-                                            if (prefix_clean and extract_prefix(x_title) == prefix_clean) or CLEAN_PATTERN.sub('', x_title) == clean_t: exists = True; break
+                                            if prefix_clean and extract_prefix(x_title) == prefix_clean: exists = True; break
+                                            if CLEAN_PATTERN.sub('', x_title) == clean_t: exists = True; break
+                                        
                                         if not exists:
                                             recovered_items.append({'toc_idx': 999, 'title': text, 'page_idx': search_p, 'y0': line['y0'], 'f_size': 0.0, 'level': item['level'], 'is_failed': False, 'body_matched': True})
-                                            found_missing = True; break
+                                            found_missing = True
+                                            break
                     seq_trackers[seq_type] = {'level': item['level'], 'last_num': seq_num, 'last_page': item['page_idx'], 'last_y0': item['y0']}
+            
             resolved_items.extend(recovered_items)
-        else: log_cb("6. [순서 검증] 생략 (TOC_BASED 모드 설정됨)")
+        else:
+            log_cb(f"\n6. [순서 검증] 생략 (TOC_BASED 모드 설정됨)")
 
-        log_cb("7. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
-        filtered_items, seen_ghosts = [], set()
+        log_cb("\n7. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
+        
+        filtered_items = []
+        seen_ghosts = set()
+        
         for item in resolved_items:
-            clean_title, raw_title = CLEAN_PATTERN.sub('', item['title']).lower(), item['title'].replace('[점검] ', '').strip()
+            clean_title = CLEAN_PATTERN.sub('', item['title']).lower()
+            raw_title = item['title'].replace('[점검] ', '').strip()
+            
             ghost_key = None
+            
             if not re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title):
                 for g in ['제출문', '요약서', '요약문', 'summary', 'contents', '참고문헌']:
-                    if g in clean_title and (g == '요약문' and '요약문' in clean_title or len(clean_title) <= len(g) + 12): ghost_key = g; break
-            
+                    if g in clean_title:
+                        if g == '요약문' and '요약문' in clean_title:
+                            ghost_key = g
+                            break
+                        if len(clean_title) <= len(g) + 12:
+                            ghost_key = g
+                            break
+                    
             if ghost_key:
-                if ghost_key in seen_ghosts: continue  
+                if ghost_key in seen_ghosts:
+                    continue  
                 seen_ghosts.add(ghost_key)
-                item['title'] = 'Summary' if ghost_key == 'summary' else ('Contents' if ghost_key == 'contents' else ghost_key)
-                item['level'] = 1 
+                
+                if ghost_key == 'summary': item['title'] = 'Summary'; item['level'] = 1
+                elif ghost_key == 'contents': item['title'] = 'Contents'; item['level'] = 1
+                elif ghost_key == '참고문헌': 
+                    item['title'] = '참고문헌'
+                else: 
+                    item['title'] = ghost_key
+                    item['level'] = 1 
+                
                 filtered_items.append(item)
-            elif not (any(x in clean_title for x in ['표지', '목차']) and len(clean_title) <= 10): filtered_items.append(item)
+            elif any(x in clean_title for x in ['표지', '목차']) and len(clean_title) <= 10:
+                continue 
+            else:
+                filtered_items.append(item)
                 
         filtered_items.append({'toc_idx': -3, 'title': '표지', 'page_idx': 0, 'y0': 0.0, 'f_size': 0.0, 'level': 1, 'is_failed': False, 'body_matched': True})
         if toc_page_idx != -1: filtered_items.append({'toc_idx': -2, 'title': '목차', 'page_idx': toc_page_idx, 'y0': 0.0, 'f_size': 0.0, 'level': 1, 'is_failed': False, 'body_matched': True})
             
-        resolved_items = sorted(filtered_items, key=lambda x: (x['page_idx'], x['y0'], x['toc_idx']))
+        def get_sort_key(x):
+            return (x['page_idx'], x['y0'], x['toc_idx'])
+                
+        resolved_items = sorted(filtered_items, key=get_sort_key)
         
         new_toc, prev_level, current_1depth_title = [], 0, ""
         for item in resolved_items:
             target_level = item['level']
             if target_level == 1: current_1depth_title = CLEAN_PATTERN.sub('', item['title']).lower()
-            if item['title'] == '참고문헌':
-                target_level = 2 if '기타' in current_1depth_title else 1 
-                if target_level == 1: current_1depth_title = '참고문헌'
             
-            if target_level > max_depth or (target_level > 1 and any(x in current_1depth_title for x in ['표지', '제출문', '요약서', '요약문', 'summary', 'contents', '목차', '참고문헌', '붙임', '별첨', '부록'])): continue
+            if item['title'] == '참고문헌':
+                if '기타' in current_1depth_title:
+                    target_level = 2
+                else:
+                    target_level = 1 
+                    current_1depth_title = '참고문헌'
+            
+            if target_level > max_depth: continue
+                
+            if target_level > 1 and any(x in current_1depth_title for x in ['표지', '제출문', '요약서', '요약문', 'summary', 'contents', '목차', '참고문헌', '붙임', '별첨', '부록']): continue
+                
             if target_level > prev_level + 1: target_level = prev_level + 1
             
-            new_toc.append([target_level, item['title'], item['page_idx'] + 1, {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, max(0, item['y0'] - 20))}])
+            y0_coord = max(0, item['y0'] - 20)
+            dest_dict = {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, y0_coord)}
+            
+            new_toc.append([target_level, item['title'], item['page_idx'] + 1, dest_dict])
             prev_level = target_level
 
         new_toc.append([1, "끝페이지", total_pages, {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, 0)}])
         doc.set_toc(new_toc)
         doc.save(output_path)
-        log_cb("✨ 성공적으로 PDF 책갈피 생성이 완료되었습니다.")
+        log_cb("\n✨ 성공적으로 PDF 책갈피 생성이 완료되었습니다.")
         
         return new_toc
 
 
 # ==========================================
-# Streamlit 웹 UI 구현
+# Streamlit 웹 UI 구현 (미리보기 제거)
 # ==========================================
 st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 
@@ -711,7 +898,7 @@ if uploaded_file is not None:
             
             with col1:
                 st.markdown("### 🗂️ 생성된 책갈피 구조")
-                with st.container(height=400):
+                with st.container(height=600): # 미리보기가 제거되어 높이를 조금 키움
                     # HTML과 인라인 스타일을 이용해 강제로 한 줄씩 떨어지도록 처리
                     toc_html = "<ul style='list-style-type: none; padding-left: 0;'>"
                     for item in extracted_toc:
@@ -744,14 +931,6 @@ if uploaded_file is not None:
                     mime="application/pdf",
                     use_container_width=True
                 )
-                
-            st.markdown("---")
-            st.markdown("### 👁️ 웹에서 PDF 미리보기")
-            
-            # Streamlit의 components.html을 사용하여 샌드박스(독립된 iframe) 환경에서 PDF 렌더링 (보안 필터 우회)
-            base64_pdf = base64.b64encode(pdf_data).decode('utf-8')
-            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="100%" type="application/pdf" style="border:none;"></iframe>'
-            components.html(pdf_display, height=800)
                 
         # 메모리 반환 및 임시 파일 삭제
         try:
