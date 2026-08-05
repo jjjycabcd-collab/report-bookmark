@@ -143,26 +143,23 @@ def fix_broken_characters(text):
     return re.sub(r'(?<=[가-힣])[^\s가-힣\x20-\x7E·]+(?=[가-힣])', '·', text)
 
 # ---------------------------------------------------------
-# [헬퍼 함수] 사용자 입력 기호(예: 1., 가.)를 안전한 정규식으로 변환
+# [헬퍼 함수] 사용자 입력 기호 변환
 # ---------------------------------------------------------
 def parse_custom_format(fmt):
     if not fmt: return None
     escaped = re.escape(fmt.strip())
-    # 사용자 입력의 '1'은 모든 숫자로, '가'는 한글로 매핑합니다.
     escaped = escaped.replace('1', r'[1-9]\d*')
     escaped = escaped.replace('가', rf'[{KOR_IDX}]')
     escaped = escaped.replace('A', r'[A-Z]')
     escaped = escaped.replace('a', r'[a-z]')
     return re.compile(rf'^\s*({escaped})(?:\s+|$)')
 
-# [수정] custom_regex 매개변수를 추가하여 입력된 기호를 최우선으로 추출합니다.
 def extract_prefix(t, custom_regex_1=None, custom_regex_2=None):
     t = t.replace('[점검]', '').strip()
     m = re.match(r'^\s*(<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?)', t)
     if m:
         return m.group(1).replace('<', '').replace('>', '').replace('[', '').replace(']', '').replace(' ', '')
         
-    # 사용자 정의 기호가 일치하면 우선적으로 추출 (기존 소스 무영향)
     if custom_regex_1:
         m = custom_regex_1.match(t)
         if m: return re.sub(r'\s+', '', m.group(1))
@@ -257,14 +254,12 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1):
             
     return None, 0.0
 
-# [수정] custom_regex 매개변수를 추가하여 입력된 기호를 최우선으로 판별합니다.
 def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_scan=False, max_depth=2, custom_regex_1=None, custom_regex_2=None):
     t = title.strip()
     clean_t = CLEAN_PATTERN.sub('', t)
     
     if is_ghost_title(clean_t): return 1
     
-    # [사용자 정의 기호 최우선 판별]
     if custom_regex_1 and custom_regex_1.match(t): return 1
     if custom_regex_2 and custom_regex_2.match(t): return 2
     
@@ -360,12 +355,11 @@ def get_parent_1depth(p_idx, y0, items):
 # ==========================================
 # 통합 프로세스 로직
 # ==========================================
-def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, fallback_1depth, custom_lvl1, custom_lvl2, st_logger):
+def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, custom_lvl1, custom_lvl2, st_logger):
     
     MAX_DEPTH = max_depth
     SCAN_MODE = scan_mode
     
-    # 사용자 정의 기호 정규식 객체화
     rx_lvl1 = parse_custom_format(custom_lvl1)
     rx_lvl2 = parse_custom_format(custom_lvl2)
     
@@ -472,7 +466,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             clean_t = CLEAN_PATTERN.sub('', title)
             if clean_t in created_titles: continue
 
-            # 사용자 정의 패턴 rx_lvl1, rx_lvl2 전달
             level = determine_level(title, has_jang, font_size=0, is_body_scan=False, max_depth=MAX_DEPTH, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2)
             target_page_idx = min(max(printed_page + offset, toc_end_idx + 1), total_pages - 1)
             found, found_page, found_y0, found_f_size = False, target_page_idx, 0.0, 0.0
@@ -588,7 +581,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             for line in cache.get_valid_lines(p_idx):
                 text, y0, max_size, is_desc = line['text'], line['y0'], line['max_size'], line['is_desc']
                 
-                # 사용자가 지정한 정규식이 있다면 그것도 후보에 포함시킴
                 if CANDIDATE_PATTERN.match(text) or (rx_lvl1 and rx_lvl1.match(text)) or (rx_lvl2 and rx_lvl2.match(text)):
                     prefix_str = extract_prefix(text, rx_lvl1, rx_lvl2)
                     if prefix_str:
@@ -681,7 +673,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         valid_items = []
         current_seq_trackers = {} 
 
-        # [유효성 검사 추가] 1-depth 시퀀스 및 페이지 역전 검증 (ex. "3." 밑에 가짜 "1."이 오는 경우 배제)
         depth1_type = None
         depth1_last_num = 0
         depth1_last_page = -1
@@ -702,21 +693,17 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         depth1_last_page = item['page_idx']
                     else:
                         if seq_type == depth1_type:
-                            # 번호가 정상적으로 증가하고, 페이지도 정상적으로 뒤쪽인 경우
                             if seq_num > depth1_last_num and item['page_idx'] >= depth1_last_page:
                                 depth1_last_num = seq_num
                                 depth1_last_page = item['page_idx']
-                            # 번호가 이전 번호보다 작거나 페이지가 역전된 경우: 가짜 1-depth로 판정
                             elif seq_num <= depth1_last_num or item['page_idx'] < depth1_last_page:
                                 is_valid_1depth = False
                                 st_logger.print(f"  -> [경고] 1-depth 순서/페이지 역전 감지됨: '{item['title']}' (무시 처리)")
                         else:
-                            # 기호 체계가 변경되었을 경우 (예: 로마자 -> 숫자)
                             depth1_type = seq_type
                             depth1_last_num = seq_num
                             depth1_last_page = item['page_idx']
                 
-                # 검증을 통과한 1-depth만 최종 리스트에 추가
                 if is_valid_1depth:
                     current_seq_trackers.clear()  
                     valid_items.append(item)
@@ -815,27 +802,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         else:
             st_logger.print(f"\n6. [순서 검증] 생략 (TOC_BASED 모드 설정됨)")
 
-        ########## [추가 로직] 1-depth 누락 시 하위(2-depth) 페이지로 강제 연결 (Fallback) ##########
-        if fallback_1depth:
-            st_logger.print("\n[옵션 적용] 목차 기반 1-depth 강제 연결 로직 수행 중...")
-            resolved_items.sort(key=lambda x: x.get('toc_idx', 999))
-            
-            for i in range(len(resolved_items)):
-                item = resolved_items[i]
-                if item['level'] == 1 and item.get('is_failed', False):
-                    for j in range(i + 1, len(resolved_items)):
-                        child_item = resolved_items[j]
-                        if child_item['level'] == 1: break
-                        if not child_item.get('is_failed', False):
-                            item['page_idx'] = child_item['page_idx']
-                            item['y0'] = 0.0  
-                            item['is_failed'] = False
-                            if '[점검]' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
-                            break 
-                            
-            resolved_items.sort(key=lambda x: (x['page_idx'], x['y0'], x.get('toc_idx', 999)))
-        ######################################################################################
-
         st_logger.print("\n7. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
         
         filtered_items = []
@@ -910,12 +876,11 @@ st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
-# 사이드바: 실행 옵션
+# 사이드바: 실행 옵션 설정 및 재배치 완료
 st.sidebar.header("⚙️ 실행 옵션 설정")
 SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0)
-EXCLUDE_FOOTNOTES = st.sidebar.checkbox("2. 하단 각주(Footnote) 강제 배제", value=False)
-TARGET_DEPTH = st.sidebar.number_input("3. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
-FALLBACK_1DEPTH = st.sidebar.checkbox("4. 1-depth 누락 시 하위(2-depth) 강제 연결", value=False, help="표 안의 텍스트 분리 등으로 1-depth 본문 매칭이 실패할 경우, 바로 아래 성공한 2-depth 항목이 위치한 페이지의 최상단으로 1-depth를 강제 연결합니다.")
+TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
+EXCLUDE_FOOTNOTES = st.sidebar.checkbox("3. 하단 각주(Footnote) 강제 배제", value=False)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 맞춤형 기호 강제 지정 (옵션)")
@@ -953,7 +918,6 @@ if uploaded_file is not None:
                 scan_mode=SCAN_MODE,
                 exclude_footnotes=EXCLUDE_FOOTNOTES,
                 max_depth=TARGET_DEPTH,
-                fallback_1depth=FALLBACK_1DEPTH,
                 custom_lvl1=CUSTOM_LVL1, # 사용자 지정 1-depth 기호 전달
                 custom_lvl2=CUSTOM_LVL2, # 사용자 지정 2-depth 기호 전달
                 st_logger=st_logger
