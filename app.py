@@ -20,7 +20,7 @@ class StreamlitLogger:
         self.placeholder.code("\n".join(self.logs), language="text")
 
 # ==========================================
-# 유사도 검사 라이브러리 지원 (rapidfuzz 없으면 difflib 사용)
+# 유사도 검사 라이브러리 지원
 # ==========================================
 try:
     from rapidfuzz import fuzz
@@ -146,7 +146,7 @@ def fix_broken_characters(text):
     text = text.replace('\uf85e', '·').replace('獜', '·')      
     return re.sub(r'(?<=[가-힣])[^\s가-힣\x20-\x7E·]+(?=[가-힣])', '·', text)
 
-# 사용자 입력 기호 변환
+# [수정] 3-depth 기호 옵션 추가
 def parse_custom_format(fmt):
     if not fmt: return None
     escaped = re.escape(fmt.strip())
@@ -156,7 +156,7 @@ def parse_custom_format(fmt):
     escaped = escaped.replace('a', r'[a-z]')
     return re.compile(rf'^\s*({escaped})(?:\s+|$)')
 
-def extract_prefix(t, custom_regex_1=None, custom_regex_2=None):
+def extract_prefix(t, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None):
     t = t.replace('[점검]', '').strip()
     m = re.match(r'^\s*(<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?)', t)
     if m: return m.group(1).replace('<', '').replace('>', '').replace('[', '').replace(']', '').replace(' ', '')
@@ -166,6 +166,9 @@ def extract_prefix(t, custom_regex_1=None, custom_regex_2=None):
         if m: return re.sub(r'\s+', '', m.group(1))
     if custom_regex_2:
         m = custom_regex_2.match(t)
+        if m: return re.sub(r'\s+', '', m.group(1))
+    if custom_regex_3:
+        m = custom_regex_3.match(t)
         if m: return re.sub(r'\s+', '', m.group(1))
         
     m = re.match(rf'^\s*(제\s*\d+\s*[장절]|[1-9]\d*(?:\.\d+)+|[{KOR_IDX}][-\.]\d+|[1-9]\d*(?:-\d+)+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\.\)）]|[1-9]\d*[\.\)）]|[A-Z][\.\)]|[1-9]\d*(?=\s+[가-힣a-zA-Z]))', t)
@@ -197,7 +200,7 @@ def is_3depth_in_jang(title):
     if re.match(r'^[1-9]\d*[\.\)]', t_no) or re.match(rf'^[{KOR_IDX}][\.\)]', t_no) or re.match(r'^[A-Z][\.\)]', t_no) or re.match(r'^\([1-9]\d*\)', t_no) or re.match(rf'^\([{KOR_IDX}]\)', t_no): return True
     return False
 
-def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=None, custom_regex_2=None):
+def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None):
     if p_idx <= toc_end_idx: return None, 0.0, 0, 0 
     dict_data = cache.get_dict(p_idx)
     toc_body = PREFIX_STRIP_PATTERN.sub('', toc_title).strip()
@@ -206,7 +209,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
     
     core_length = max(5, int(len(toc_clean) * 0.6))
     toc_core = toc_clean[:core_length]
-    toc_prefix = extract_prefix(toc_title, custom_regex_1, custom_regex_2)
+    toc_prefix = extract_prefix(toc_title, custom_regex_1, custom_regex_2, custom_regex_3)
     
     for b in dict_data.get("blocks", []):
         if b.get("type") != 0: continue
@@ -223,7 +226,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
                     main_color = s.get("color", 0)
             
             text = fix_broken_characters(text.strip())
-            text_prefix = extract_prefix(text, custom_regex_1, custom_regex_2)
+            text_prefix = extract_prefix(text, custom_regex_1, custom_regex_2, custom_regex_3)
             if toc_prefix and text_prefix and toc_prefix != text_prefix: continue
 
             text_body = PREFIX_STRIP_PATTERN.sub('', text).strip()
@@ -247,7 +250,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
                     main_color = s.get("color", 0)
         
         block_text = fix_broken_characters(block_text.strip())
-        b_prefix = extract_prefix(block_text, custom_regex_1, custom_regex_2)
+        b_prefix = extract_prefix(block_text, custom_regex_1, custom_regex_2, custom_regex_3)
         if toc_prefix and b_prefix and toc_prefix != b_prefix: continue
 
         block_body = PREFIX_STRIP_PATTERN.sub('', block_text).strip()
@@ -257,7 +260,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
             
     return None, 0.0, 0, 0
 
-def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_scan=False, max_depth=2, custom_regex_1=None, custom_regex_2=None):
+def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_scan=False, max_depth=2, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None):
     t = title.strip()
     clean_t = CLEAN_PATTERN.sub('', t)
     
@@ -265,6 +268,7 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
     
     if custom_regex_1 and custom_regex_1.match(t): return 1
     if custom_regex_2 and custom_regex_2.match(t): return 2
+    if custom_regex_3 and custom_regex_3.match(t): return 3
     
     if re.match(r'^제\s*\d+\s*장', t) or re.match(r'^<?\[?(붙임|별첨|부록)', t): return 1
     if has_jang:
@@ -272,13 +276,8 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         if max_depth >= 3 and is_3depth_in_jang(t): return 3
         return 99 
         
-    if re.match(r'^[1-9]\d*\.\d+\.\d+', t): return 3
-    if re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t): return 3
-    if re.match(rf'^[{KOR_IDX}]-\d+[\.\)]?', t): return 3
-    
-    if max_depth >= 3:
-        if re.match(r'^[1-9]\d*[\)）](?:\s+|$)', t): return 3
-        if re.match(r'^\([1-9]\d*\)(?:\s+|$)', t): return 3
+    if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+[\.\)]?', t): return 3
+    if max_depth >= 3 and (re.match(r'^[1-9]\d*[\)）](?:\s+|$)', t) or re.match(r'^\([1-9]\d*\)(?:\s+|$)', t)): return 3
     if re.match(r'^제\s*\d+\s*절', t): return 2
     if re.match(r'^[1-9]\d*\.\d+[\.\s]?', t): return 2 
     if re.match(r'^[1-9]\d*-\d+[\.\)]?', t): return 2 
@@ -348,13 +347,14 @@ def get_sort_key(x):
 # ==========================================
 # 통합 프로세스 로직 
 # ==========================================
-def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, custom_lvl1, custom_lvl2, fallback_1depth, st_logger):
+def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, custom_lvl1, custom_lvl2, custom_lvl3, fallback_1depth, st_logger):
     
     MAX_DEPTH = max_depth
     SCAN_MODE = scan_mode
     
     rx_lvl1 = parse_custom_format(custom_lvl1)
     rx_lvl2 = parse_custom_format(custom_lvl2)
+    rx_lvl3 = parse_custom_format(custom_lvl3)
     
     with fitz.open(input_path) as doc:
         total_pages = len(doc)
@@ -455,7 +455,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         for item in toc_bookmarks:
             if item['p_num'] == 0: continue
             for p_idx in range(toc_end_idx + 1, total_pages):
-                y0, _, _, _ = find_anchor_in_page(item['title'], cache, p_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2)
+                y0, _, _, _ = find_anchor_in_page(item['title'], cache, p_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
                 if y0 is not None:
                     offset = p_idx - item['p_num']
                     break
@@ -472,7 +472,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             clean_t = CLEAN_PATTERN.sub('', title)
             if clean_t in created_titles: continue
 
-            level = determine_level(title, has_jang, font_size=0, is_body_scan=False, max_depth=MAX_DEPTH, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2)
+            level = determine_level(title, has_jang, font_size=0, is_body_scan=False, max_depth=MAX_DEPTH, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
             expected_page = printed_page + offset if printed_page > 0 else seq_page
             target_page_idx = min(max(expected_page, toc_end_idx + 1), total_pages - 1)
             found, found_page, found_y0, found_f_size, found_flags, found_color = False, target_page_idx, 0.0, 0.0, 0, 0
@@ -485,7 +485,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             for local_offset in [0, -1, 1, -2, 2]:
                 check_idx = target_page_idx + local_offset
                 if toc_end_idx < check_idx < total_pages: 
-                    y0, f_size, f_flags, f_color = find_anchor_in_page(title, cache, check_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2)
+                    y0, f_size, f_flags, f_color = find_anchor_in_page(title, cache, check_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
                     if y0 is not None:
                         if min_page != -1 and (check_idx < min_page or (check_idx == min_page and y0 < min_y0 - 5.0)): continue
                         if check_idx < strict_seq_page or (check_idx == strict_seq_page and y0 < strict_seq_y0 - 5.0): continue
@@ -495,7 +495,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             if not found:
                 search_limit = min(total_pages, target_page_idx + 15)
                 for check_idx in range(last_success_page_idx, search_limit):
-                    y0, f_size, f_flags, f_color = find_anchor_in_page(title, cache, check_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2)
+                    y0, f_size, f_flags, f_color = find_anchor_in_page(title, cache, check_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
                     if y0 is not None:
                         if min_page != -1 and (check_idx < min_page or (check_idx == min_page and y0 < min_y0 - 5.0)): continue
                         if check_idx < strict_seq_page or (check_idx == strict_seq_page and y0 < strict_seq_y0 - 5.0): continue
@@ -513,7 +513,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 if level == 1: last_1depth_coord = (found_page, 0.0)
                 elif level == 2: last_2depth_coord = (found_page, 0.0)
             
-            final_level = determine_level(title, has_jang, font_size=found_f_size, is_body_scan=False, max_depth=MAX_DEPTH, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2) if found else level
+            final_level = determine_level(title, has_jang, font_size=found_f_size, is_body_scan=False, max_depth=MAX_DEPTH, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3) if found else level
             resolved_items.append({
                 'toc_idx': toc_idx, 'title': title if found else f"[점검] {title}", 
                 'page_idx': found_page, 'y0': found_y0, 'f_size': found_f_size, 
@@ -548,18 +548,18 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'level': 1, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
                     continue 
 
-                if CANDIDATE_PATTERN.match(text) or (rx_lvl1 and rx_lvl1.match(text)) or (rx_lvl2 and rx_lvl2.match(text)):
+                if CANDIDATE_PATTERN.match(text) or (rx_lvl1 and rx_lvl1.match(text)) or (rx_lvl2 and rx_lvl2.match(text)) or (rx_lvl3 and rx_lvl3.match(text)):
                     if not re.search(r'[가-힣a-zA-Z]', text): continue
                     
-                    prefix_str = extract_prefix(text, rx_lvl1, rx_lvl2)
+                    prefix_str = extract_prefix(text, rx_lvl1, rx_lvl2, rx_lvl3)
                     if prefix_str:
                         rest_text = text[text.find(prefix_str) + len(prefix_str):].lstrip()
                         if re.match(r'^(?:%|%p|배|초|원|건|명|개|단계|년|월|일|회|종)(?:\s+|[^\w]|$)', rest_text): continue
                             
                     if any(fs in text for fs in ["이 보고서는", "발표하는 때에는", "국가과학기술기밀"]): continue
                     
-                    cand_prefix, cand_clean, is_dup = extract_prefix(text, rx_lvl1, rx_lvl2), CLEAN_PATTERN.sub('', text), False
-                    cand_level_toc = determine_level(text, has_jang, font_size=max_size, font_trackers=global_font_trackers, is_body_scan=True, max_depth=MAX_DEPTH, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2)
+                    cand_prefix, cand_clean, is_dup = extract_prefix(text, rx_lvl1, rx_lvl2, rx_lvl3), CLEAN_PATTERN.sub('', text), False
+                    cand_level_toc = determine_level(text, has_jang, font_size=max_size, font_trackers=global_font_trackers, is_body_scan=True, max_depth=MAX_DEPTH, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
                     if cand_level_toc == 99: continue
                     
                     cand_1depth_parent = get_parent_1depth(p_idx, y0, resolved_items)
@@ -570,7 +570,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     
                     for item in resolved_items:
                         if item['page_idx'] == p_idx and abs(item['y0'] - y0) < 5.0:
-                            item_prefix = extract_prefix(item['title'].replace('[점검] ', ''), rx_lvl1, rx_lvl2)
+                            item_prefix = extract_prefix(item['title'].replace('[점검] ', ''), rx_lvl1, rx_lvl2, rx_lvl3)
                             if cand_prefix and item_prefix and cand_prefix != item_prefix: continue 
                             item['is_failed'], item['body_matched'] = False, True
                             if '점검' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
@@ -580,7 +580,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         for item in resolved_items:
                             if item['level'] != cand_level_toc: continue 
                             if cand_level_toc in [2, 3] and get_parent_1depth(item['page_idx'], item['y0'], resolved_items) != cand_1depth_parent: continue 
-                            item_prefix = extract_prefix(item['title'].replace('[점검] ', ''), rx_lvl1, rx_lvl2)
+                            item_prefix = extract_prefix(item['title'].replace('[점검] ', ''), rx_lvl1, rx_lvl2, rx_lvl3)
                             if item_prefix == cand_prefix and get_ratio(CLEAN_PATTERN.sub('', item['title'].replace('[점검] ', '')), cand_clean) > 0.40:
                                 item.update({'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'is_failed': False, 'body_matched': True})
                                 if '점검' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
@@ -613,14 +613,18 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         resolved_items.sort(key=get_sort_key)
 
-        st_logger.print("\n4. [최종 방어선] 강력한 시퀀스 유효성 검증 및 필터링 가동 중...")
-        strict_items = []
+        # ----------------------------------------------------
+        # [Step 4-A] 1, 2-depth 강력한 시퀀스 유효성 검증 (3-depth 원천 배제)
+        # ----------------------------------------------------
+        st_logger.print("\n4-A. [최종 방어선] 1-depth, 2-depth 시퀀스/페이지 역전 검증 및 영구 잠금 중...")
+        strict_items_1_2 = []
+        
         current_1d_title = None
         current_2d_title = None
         
-        current_seq_state = {1: 0, 2: 0, 3: 0}
-        current_seq_type = {1: None, 2: None, 3: None}
-        current_font_profile = {2: None, 3: None} 
+        current_seq_state = {1: 0, 2: 0}
+        current_seq_type = {1: None, 2: None}
+        current_font_profile = {2: None} 
         
         is_current_1d_failed = False
         
@@ -630,17 +634,20 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         for item in resolved_items:
             lvl = item['level']
+            # 3-depth 후보는 1단계 검증에서 완전히 제외하여 1,2-depth 오염을 막음
+            if lvl not in [1, 2, 99]: continue 
+            
             title = item['title']
             clean_t = CLEAN_PATTERN.sub('', title).lower()
             
             if is_ghost_title(clean_t) or title in ['표지', '목차', '참고문헌']:
-                strict_items.append(item)
+                strict_items_1_2.append(item)
                 if lvl == 1: 
                     current_1d_title = title
                     is_current_1d_failed = '[점검]' in title
-                    current_seq_state = {1: 0, 2: 0, 3: 0}
-                    current_seq_type = {1: None, 2: None, 3: None}
-                    current_font_profile = {2: None, 3: None}
+                    current_seq_state = {1: 0, 2: 0}
+                    current_seq_type = {1: None, 2: None}
+                    current_font_profile = {2: None}
                     depth1_type = None; depth1_last_num = 0; depth1_last_page = -1
                 continue
                 
@@ -670,18 +677,16 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     current_1d_title = title
                     current_2d_title = None 
                     is_current_1d_failed = '[점검]' in title
-                    current_seq_state = {1: 0, 2: 0, 3: 0}
-                    current_seq_type = {1: None, 2: None, 3: None}
-                    current_font_profile = {2: None, 3: None}
-                    strict_items.append(item)
+                    current_seq_state = {1: 0, 2: 0}
+                    current_seq_type = {1: None, 2: None}
+                    current_font_profile = {2: None}
+                    strict_items_1_2.append(item)
                 else:
                     continue
                 
-            elif lvl in [2, 3]:
+            elif lvl == 2:
                 if is_current_1d_failed: continue 
-                if lvl == 2 and not current_1d_title: continue
-                if lvl == 3 and not current_2d_title: continue
-                if lvl > MAX_DEPTH: continue
+                if not current_1d_title: continue
 
                 is_jump_error = False
                 skip_item = False
@@ -689,18 +694,14 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 
                 if sn is not None and st_type is not None:
                     if current_seq_type[lvl] is None:
-                        if sn > 1:
-                            is_jump_error = True
+                        if sn > 1: is_jump_error = True
                         current_seq_type[lvl] = st_type
                         current_seq_state[lvl] = sn
                         current_font_profile[lvl] = item_profile
                     else:
-                        if st_type != current_seq_type[lvl]:
-                            skip_item = True
-                        elif sn <= current_seq_state[lvl]:
-                            skip_item = True
-                        elif sn > current_seq_state[lvl] + 1:
-                            skip_item = True
+                        if st_type != current_seq_type[lvl]: skip_item = True
+                        elif sn <= current_seq_state[lvl]: skip_item = True
+                        elif sn > current_seq_state[lvl] + 1: skip_item = True
                         else:
                             base_profile = current_font_profile[lvl]
                             if base_profile:
@@ -720,14 +721,77 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     if not item['title'].startswith('[점검]'):
                         item['title'] = "[점검] " + item['title']
                 
-                strict_items.append(item)
-                if lvl == 2:
-                    current_2d_title = item['title']
-                    current_seq_state[3] = 0
-                    current_seq_type[3] = None
-                    current_font_profile[3] = None
+                strict_items_1_2.append(item)
+
+        # ----------------------------------------------------
+        # [Step 4-B] 3-depth 독립 시퀀스 유효성 검증 (1, 2-depth 완전 보존)
+        # ----------------------------------------------------
+        strict_items_3 = []
+        if MAX_DEPTH >= 3:
+            st_logger.print("\n4-B. [독립 스캔] 3-depth 시퀀스 유효성 검증 중 (1, 2-depth 보존)...")
+            
+            # 확정된 1, 2-depth 리스트에 3-depth 후보만 병합하여 순회
+            merged_for_pass2 = strict_items_1_2 + [i for i in resolved_items if i['level'] == 3]
+            merged_for_pass2.sort(key=get_sort_key)
+            
+            current_2d_valid = False
+            current_seq_state_3 = 0
+            current_seq_type_3 = None
+            current_font_profile_3 = None
+            
+            for item in merged_for_pass2:
+                lvl = item['level']
+                if lvl == 1:
+                    current_2d_valid = False
+                    current_seq_state_3 = 0
+                    current_seq_type_3 = None
+                    current_font_profile_3 = None
+                elif lvl == 2:
+                    current_2d_valid = True
+                    current_seq_state_3 = 0
+                    current_seq_type_3 = None
+                    current_font_profile_3 = None
+                elif lvl == 3:
+                    if not current_2d_valid: continue 
+                    
+                    st_type, sn = get_seq_info(item['title'].replace('[점검] ', ''))
+                    is_jump_error = False
+                    skip_item = False
+                    item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0))
+                    
+                    if sn is not None and st_type is not None:
+                        if current_seq_type_3 is None:
+                            if sn > 1: is_jump_error = True
+                            current_seq_type_3 = st_type
+                            current_seq_state_3 = sn
+                            current_font_profile_3 = item_profile
+                        else:
+                            if st_type != current_seq_type_3: skip_item = True
+                            elif sn <= current_seq_state_3: skip_item = True
+                            elif sn > current_seq_state_3 + 1: skip_item = True
+                            else:
+                                base_profile = current_font_profile_3
+                                if base_profile:
+                                    b_size, b_flags, b_color = base_profile
+                                    i_size, i_flags, i_color = item_profile
+                                    if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
+                                        skip_item = True
+                            if not skip_item and not is_jump_error:
+                                current_seq_state_3 = sn
+                    else:
+                        skip_item = True
                         
-        resolved_items = strict_items
+                    if skip_item: continue
+                    
+                    if is_jump_error:
+                        if not item['title'].startswith('[점검]'):
+                            item['title'] = "[점검] " + item['title']
+                            
+                    strict_items_3.append(item)
+                    
+        # 1,2-depth 확정본과 3-depth 확정본을 안전하게 결합
+        resolved_items = strict_items_1_2 + strict_items_3
+        resolved_items.sort(key=get_sort_key)
 
         ########## [웹 옵션 로직] 1-depth 누락 시 하위(2-depth) 페이지로 강제 연결 (Fallback) ##########
         if fallback_1depth:
@@ -825,7 +889,7 @@ st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
-# 사이드바: 실행 옵션
+# 사이드바: 실행 옵션 (사용자가 원하는 순서대로 배치)
 st.sidebar.header("⚙️ 실행 옵션 설정")
 SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0)
 TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
@@ -834,9 +898,10 @@ FALLBACK_1DEPTH = st.sidebar.checkbox("4. 1-depth 누락 시 하위(2-depth) 강
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 맞춤형 기호 강제 지정 (옵션)")
-st.sidebar.caption("본문 폰트 차이로 판별이 꼬일 때 입력하세요.<br/>미입력 시 기본 자동 판별이 작동합니다.<br/>*(예: 1-depth에 **1.** 입력, 2-depth에 **1-1.** 입력)*", unsafe_allow_html=True)
-CUSTOM_LVL1 = st.sidebar.text_input("1-depth (대분류) 기호", value="")
-CUSTOM_LVL2 = st.sidebar.text_input("2-depth (중분류) 기호", value="")
+st.sidebar.caption("본문 폰트 차이로 판별이 꼬일 때 입력하세요.<br/>미입력 시 기본 자동 판별이 작동합니다.", unsafe_allow_html=True)
+CUSTOM_LVL1 = st.sidebar.text_input("1-depth (대분류) 기호", value="", placeholder="예: 1.")
+CUSTOM_LVL2 = st.sidebar.text_input("2-depth (중분류) 기호", value="", placeholder="예: 1-1.")
+CUSTOM_LVL3 = st.sidebar.text_input("3-depth (소분류) 기호", value="", placeholder="예: 1)")
 
 uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
 
@@ -873,6 +938,7 @@ if uploaded_file is not None:
                 max_depth=TARGET_DEPTH,
                 custom_lvl1=CUSTOM_LVL1,
                 custom_lvl2=CUSTOM_LVL2,
+                custom_lvl3=CUSTOM_LVL3,
                 fallback_1depth=FALLBACK_1DEPTH,
                 st_logger=st_logger
             )
