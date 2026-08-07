@@ -48,11 +48,6 @@ class StreamlitLogger:
         self.logs.append(msg)
         # 실행 중에는 일반 코드 블록으로 실시간 출력
         self.placeholder.code("\n".join(self.logs), language="text")
-        
-    def finalize(self, compare_logs=None):
-        # 처리가 끝나면 HTML 서식(색상 하이라이트)을 적용하여 화면 고정
-        formatted_html = format_final_logs(self.logs, compare_logs)
-        self.placeholder.markdown(formatted_html, unsafe_allow_html=True)
 
 # ==========================================
 # 유사도 검사 라이브러리 지원
@@ -383,7 +378,7 @@ def get_sort_key(x):
     return (x['page_idx'], y_val, t_val)
 
 # ==========================================
-# 통합 프로세스 로직 
+# 통합 프로세스 로직
 # ==========================================
 def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, custom_lvl1, custom_lvl2, custom_lvl3, st_logger):
     
@@ -771,7 +766,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             raw_title = item['title'].replace('[점검] ', '').strip()
             ghost_key = None
             
-            # [수정] 사용자가 요청한 "영문목차는 무시" 로직
             if '영문목차' in clean_title: continue
             
             if not re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title):
@@ -863,7 +857,7 @@ if uploaded_file is not None:
     if st.session_state.current_file != uploaded_file.name:
         st.session_state.current_file = uploaded_file.name
         st.session_state.scan_mode_run = None
-        for key in ['extracted_toc_single', 'pdf_data_single', 'logs_single', 'extracted_toc_full', 'pdf_data_full', 'logs_full', 'extracted_toc_toc', 'pdf_data_toc', 'logs_toc']:
+        for key in ['pdf_data_single', 'logs_single', 'pdf_data_full', 'logs_full', 'pdf_data_toc', 'logs_toc']:
             st.session_state.pop(key, None)
 
     if st.button("🚀 책갈피 생성 시작", type="primary"):
@@ -873,56 +867,57 @@ if uploaded_file is not None:
             
         st.session_state.scan_mode_run = SCAN_MODE
 
-        if SCAN_MODE == "ALL":
-            tmp_out_full = tmp_in_path.replace(".pdf", "_full.pdf")
-            tmp_out_toc = tmp_in_path.replace(".pdf", "_toc.pdf")
-            
-            col1, col2 = st.columns(2)
-            col1.markdown("#### 🔍 FULL_SCAN 진행 현황")
-            logger_full = StreamlitLogger(col1)
-            col2.markdown("#### 🔍 TOC_BASED 진행 현황")
-            logger_toc = StreamlitLogger(col2)
-            
-            with st.spinner("FULL_SCAN 모드로 분석 중..."):
-                toc_full = process_pdf_bookmarks(tmp_in_path, tmp_out_full, "FULL_SCAN", EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger_full)
-            
-            with st.spinner("TOC_BASED 모드로 분석 중..."):
-                toc_toc = process_pdf_bookmarks(tmp_in_path, tmp_out_toc, "TOC_BASED", EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger_toc)
-            
-            if toc_full and toc_toc:
-                logger_full.finalize(compare_logs=logger_toc.logs)
-                logger_toc.finalize(compare_logs=logger_full.logs)
+        live_status_container = st.empty()
+        with live_status_container.container():
+            if SCAN_MODE == "ALL":
+                tmp_out_full = tmp_in_path.replace(".pdf", "_full.pdf")
+                tmp_out_toc = tmp_in_path.replace(".pdf", "_toc.pdf")
                 
-                st.session_state.logs_full = logger_full.logs
-                st.session_state.logs_toc = logger_toc.logs
-                with open(tmp_out_full, "rb") as f: st.session_state.pdf_data_full = f.read()
-                with open(tmp_out_toc, "rb") as f: st.session_state.pdf_data_toc = f.read()
+                col1, col2 = st.columns(2)
+                col1.markdown("#### 🔍 FULL_SCAN 진행 현황")
+                logger_full = StreamlitLogger(col1)
+                col2.markdown("#### 🔍 TOC_BASED 진행 현황")
+                logger_toc = StreamlitLogger(col2)
                 
-            try:
-                os.remove(tmp_in_path)
-                os.remove(tmp_out_full)
-                os.remove(tmp_out_toc)
-            except OSError: pass
-
-        else:
-            tmp_out_path = tmp_in_path.replace(".pdf", "_bookmarked.pdf")
-            st.markdown("### 🔄 진행 현황")
-            logger = StreamlitLogger()
-            
-            with st.spinner("PDF를 분석하고 책갈피를 생성 중입니다..."):
-                extracted_toc = process_pdf_bookmarks(tmp_in_path, tmp_out_path, SCAN_MODE, EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger)
+                with st.spinner("FULL_SCAN 모드로 분석 중..."):
+                    toc_full = process_pdf_bookmarks(tmp_in_path, tmp_out_full, "FULL_SCAN", EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger_full)
                 
-            if extracted_toc:
-                logger.finalize()
-                st.session_state.logs_single = logger.logs
-                with open(tmp_out_path, "rb") as f: st.session_state.pdf_data_single = f.read()
+                with st.spinner("TOC_BASED 모드로 분석 중..."):
+                    toc_toc = process_pdf_bookmarks(tmp_in_path, tmp_out_toc, "TOC_BASED", EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger_toc)
+                
+                if toc_full and toc_toc:
+                    st.session_state.logs_full = logger_full.logs
+                    st.session_state.logs_toc = logger_toc.logs
+                    with open(tmp_out_full, "rb") as f: st.session_state.pdf_data_full = f.read()
+                    with open(tmp_out_toc, "rb") as f: st.session_state.pdf_data_toc = f.read()
                     
-            try:
-                os.remove(tmp_in_path)
-                os.remove(tmp_out_path)
-            except OSError: pass
+                try:
+                    os.remove(tmp_in_path)
+                    os.remove(tmp_out_full)
+                    os.remove(tmp_out_toc)
+                except OSError: pass
 
-    # 화면 유지 영역
+            else:
+                tmp_out_path = tmp_in_path.replace(".pdf", "_bookmarked.pdf")
+                st.markdown("### 🔄 진행 현황")
+                logger = StreamlitLogger()
+                
+                with st.spinner("PDF를 분석하고 책갈피를 생성 중입니다..."):
+                    extracted_toc = process_pdf_bookmarks(tmp_in_path, tmp_out_path, SCAN_MODE, EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger)
+                    
+                if extracted_toc:
+                    st.session_state.logs_single = logger.logs
+                    with open(tmp_out_path, "rb") as f: st.session_state.pdf_data_single = f.read()
+                        
+                try:
+                    os.remove(tmp_in_path)
+                    os.remove(tmp_out_path)
+                except OSError: pass
+        
+        # 실시간 진행 현황 컨테이너 비우기 (중복 출력 방지)
+        live_status_container.empty()
+
+    # 화면 유지 영역 (다운로드 버튼을 눌러도 사라지지 않음)
     if st.session_state.get('scan_mode_run') == "ALL" and st.session_state.get('pdf_data_full') and st.session_state.get('pdf_data_toc'):
         col1, col2 = st.columns(2)
         col1.markdown("#### 🔍 FULL_SCAN 진행 현황")
