@@ -118,12 +118,12 @@ TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MUL
 
 KOR_IDX = "가나다라마바사아자차카타파하"
 
-# [수정] 띄어쓰기 및 특수문자가 섞인 유령항목(요약문 등)을 강력하게 포착하는 1줄 추가
+# [수정] 제출문, (보고서) 요약서, 요약문, 표지, 참고문헌 등 모든 유령 항목의 공백 패턴 포착
 CANDIDATE_PATTERN = re.compile(
     rf'^\s*('
     rf'제\s*\d+\s*[장절][\.\:]?(?:\s+|$)|'
     rf'<?\[?(?:붙임|별첨|부록)\s*\d*\]?(?:\s+|$)|'
-    rf'<?\s*\[?\s*(?:제\s*출\s*문|요\s*약\s*서|요\s*약\s*문|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?(?:\s+|$)|'
+    rf'<?\s*\[?\s*(?:제\s*출\s*문|(?:보\s*고\s*서\s*)?요\s*약\s*서|요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?(?:\s+|$)|'
     rf'[1-9]\d*(?:\.\d+)+[\.\)]?(?:\s+|$)|'
     rf'[1-9]\d*\.(?:\s+|$)|'
     rf'[1-9]\d*(?=\s+[가-힣a-zA-Z])|'
@@ -136,7 +136,8 @@ CANDIDATE_PATTERN = re.compile(
     rf')'
 )
 
-PREFIX_STRIP_PATTERN = re.compile(rf'^\s*(Chapter\s*\d+|Section\s*\d+|제\s*\d+\s*[장절]|<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?|[{KOR_IDX}]|[1-9]\d*(?:\.\d+)*|(?:\d+-)+\d+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\)）]|\d+|[A-Z])\s*[\.\:\)）]?\s*', re.IGNORECASE)
+# [수정] 전처리 과정에서도 해당 공백 패턴이 정상적으로 처리되도록 추가
+PREFIX_STRIP_PATTERN = re.compile(rf'^\s*(Chapter\s*\d+|Section\s*\d+|제\s*\d+\s*[장절]|<?\s*\[?\s*(?:제\s*출\s*문|(?:보\s*고\s*서\s*)?요\s*약\s*서|요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?|<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?|[{KOR_IDX}]|[1-9]\d*(?:\.\d+)*|(?:\d+-)+\d+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\)）]|\d+|[A-Z])\s*[\.\:\)）]?\s*', re.IGNORECASE)
 
 KOR_CHARS = list(KOR_IDX)
 KOR_MAP = {k: v + 1 for v, k in enumerate(KOR_CHARS)}
@@ -233,6 +234,7 @@ def parse_custom_format(fmt):
     escaped = escaped.replace('a', r'[a-z]')
     return re.compile(rf'^\s*({escaped})(?:\s+|$)')
 
+# [수정] Prefix 추출 시에도 동일하게 공백 패턴 대응
 def extract_prefix(t, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None):
     t = t.replace('[점검]', '').strip()
     m = re.match(r'^\s*(<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?)', t)
@@ -248,7 +250,7 @@ def extract_prefix(t, custom_regex_1=None, custom_regex_2=None, custom_regex_3=N
         m = custom_regex_3.match(t)
         if m: return re.sub(r'\s+', '', m.group(1))
         
-    m = re.match(rf'^\s*(제\s*\d+\s*[장절]|[1-9]\d*(?:\.\d+)+|[{KOR_IDX}][-\.]\d+|[1-9]\d*(?:-\d+)+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\.\)）]|[1-9]\d*[\.\)）]|[A-Z][\.\)]|[1-9]\d*(?=\s+[가-힣a-zA-Z]))', t)
+    m = re.match(rf'^\s*(제\s*\d+\s*[장절]|<?\s*\[?\s*(?:제\s*출\s*문|(?:보\s*고\s*서\s*)?요\s*약\s*서|요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?|[1-9]\d*(?:\.\d+)+|[{KOR_IDX}][-\.]\d+|[1-9]\d*(?:-\d+)+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\.\)）]|[1-9]\d*[\.\)）]|[A-Z][\.\)]|[1-9]\d*(?=\s+[가-힣a-zA-Z]))', t)
     if m: return re.sub(r'\s+', '', m.group(1))
     return None
 
