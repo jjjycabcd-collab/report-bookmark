@@ -7,17 +7,52 @@ import tempfile
 import time
 
 # ==========================================
+# [스트림릿 웹 전용 헬퍼 함수] 로그 색상 렌더링
+# ==========================================
+def format_final_logs(logs, compare_logs=None):
+    formatted_logs = []
+    compare_set = set(compare_logs) if compare_logs else set()
+    
+    for line in logs:
+        out_line = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") # HTML 이스케이프
+        
+        is_diff = False
+        if compare_logs is not None:
+            # 책갈피 트리 구성(└──) 부분에서 상대방 로그에 없는 줄이면 '파란색' 처리
+            if "└──" in line and line not in compare_set:
+                is_diff = True
+        
+        # [점검] 키워드는 무조건 '붉은색' 처리
+        if "[점검]" in out_line:
+            out_line = out_line.replace("[점검]", "<span style='color:red; font-weight:bold;'>[점검]</span>")
+        
+        if is_diff:
+            out_line = f"<span style='color:blue; font-weight:bold;'>{out_line}</span>"
+            
+        formatted_logs.append(out_line)
+        
+    css = "font-family: monospace; white-space: pre-wrap; font-size: 14px; background-color: rgba(128, 128, 128, 0.1); padding: 1rem; border-radius: 0.5rem;"
+    return f"<div style='{css}'>" + "\n".join(formatted_logs) + "</div>"
+
+# ==========================================
 # [스트림릿 로깅 클래스]
 # ==========================================
 class StreamlitLogger:
-    def __init__(self):
+    def __init__(self, container=None):
         self.logs = []
-        self.placeholder = st.empty()
+        self.container = container or st
+        self.placeholder = self.container.empty()
     
     def print(self, *args, **kwargs):
         msg = " ".join(map(str, args))
         self.logs.append(msg)
+        # 실행 중에는 일반 코드 블록으로 실시간 출력
         self.placeholder.code("\n".join(self.logs), language="text")
+        
+    def finalize(self, compare_logs=None):
+        # 처리가 끝나면 HTML 서식(색상 하이라이트)을 적용하여 화면 고정
+        formatted_html = format_final_logs(self.logs, compare_logs)
+        self.placeholder.markdown(formatted_html, unsafe_allow_html=True)
 
 # ==========================================
 # 유사도 검사 라이브러리 지원
@@ -311,7 +346,7 @@ def get_seq_info(title):
     if m: return ('kor_dot', KOR_MAP.get(m.group(1)))
     m = re.match(rf'^([{KOR_IDX}])\s*[\)）](?:\s*|$)', t)
     if m: return ('kor_paren_right', KOR_MAP.get(m.group(1)))
-    m = re.match(rf'^\(\s*([{KOR_IDX}])\s*\)(?:\s*|$)', t)
+    m = re.match(rf'^\(\s*([{KOR_IDX}])\s*\)(?:\s+|$)', t)
     if m: return ('kor_paren_both', KOR_MAP.get(m.group(1)))
     m = re.match(r'^([1-9]\d*)\s*\.(?:\s*|$)', t)
     if m: return ('num_dot', int(m.group(1)))
@@ -348,7 +383,7 @@ def get_sort_key(x):
     return (x['page_idx'], y_val, t_val)
 
 # ==========================================
-# 통합 프로세스 로직
+# 통합 프로세스 로직 
 # ==========================================
 def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, custom_lvl1, custom_lvl2, custom_lvl3, st_logger):
     
@@ -527,58 +562,30 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         global_font_trackers = {'depth1': 0.0}
 
-        st_logger.print("\n3. 유령 항목(제출문, 요약서, 참고문헌 등) 전체 본문 스캔 및 구출 중...")
-        
-        # [수정] ghost_rules를 정확하게 지정하고, 영문목차는 제외
-        ghost_rules = [
-            (re.compile(r'제\s*출\s*문'), '제출문'),
-            (re.compile(r'보\s*고\s*서\s*요\s*약\s*서|요\s*약\s*서'), '요약서'),
-            (re.compile(r'요\s*약\s*문'), '요약문'),
-            (re.compile(r'영\s*문\s*요\s*약\s*서|S\s*U\s*M\s*M\s*A\s*R\s*Y', re.IGNORECASE), 'Summary'),
-            (re.compile(r'C\s*O\s*N\s*T\s*E\s*N\s*T\s*S', re.IGNORECASE), 'Contents'),
-            (re.compile(r'참\s*고\s*문\s*헌'), '참고문헌')
-        ]
-        
-        existing_titles = [CLEAN_PATTERN.sub('', re.sub(r'^[0-9가-하]+[\.\)]?\s*', '', p['title'].replace('[점검] ', ''))).lower() for p in resolved_items if not p['is_failed']]
-        found_ghosts = set()
-        
-        for p_idx in range(total_pages): 
-            if toc_page_idx != -1 and toc_page_idx <= p_idx <= toc_end_idx: continue 
-            for b in cache.get_blocks(p_idx):
-                text = fix_broken_characters(b[4].strip())
-                for rule_pattern, display_text in ghost_rules:
-                    if display_text in found_ghosts: continue
-                    if len(text) < 40 and rule_pattern.search(text):
-                        rescued = False
-                        for item in resolved_items:
-                            if item['is_failed'] and item['level'] == 1:
-                                raw_title = item['title'].replace('[점검] ', '').strip()
-                                if re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title): continue
-                                    
-                                clean_title = CLEAN_PATTERN.sub('', item['title']).lower()
-                                if display_text.lower() in clean_title or "요약" in clean_title:
-                                    item['page_idx'] = p_idx
-                                    item['y0'] = b[1]
-                                    item['is_failed'] = False
-                                    item['body_matched'] = True
-                                    if '[점검]' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
-                                    rescued = True
-                                    break
-                        if not rescued:
-                            clean_display = CLEAN_PATTERN.sub('', display_text).lower()
-                            if clean_display not in existing_titles:
-                                resolved_items.append({'toc_idx': -1, 'title': display_text, 'page_idx': p_idx, 'y0': b[1], 'f_size': 0.0, 'flags': 0, 'color': 0, 'level': 1, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
-                                existing_titles.append(clean_display)
-                        found_ghosts.add(display_text)
-                        break
-
-        st_logger.print("\n4. 본문 스캔(FULL_SCAN) 및 폰트/플래그 프로파일링 중...")
+        st_logger.print("\n3. 본문 스캔(FULL_SCAN) 및 폰트/플래그 프로파일링 중...")
         for p_idx in range(toc_end_idx + 1, total_pages):
             for line in cache.get_valid_lines(p_idx):
                 text, y0, max_size, main_flags, main_color, is_desc = line['text'], line['y0'], line['max_size'], line['flags'], line['color'], line['is_desc']
                 
                 if re.match(r'^\s*<*(표|그림|Table|Fig)[\.\s]*\d+', text, re.IGNORECASE): continue
                 
+                text_nospace = text.replace(" ", "")
+                is_special_kws_match = all(k in text_nospace for k in ["붙임", "연구책임자", "대표", "연구실적"])
+                
+                if is_special_kws_match:
+                    mapped = False
+                    for item in resolved_items:
+                        item_nospace = item['title'].replace('[점검] ', '').replace(" ", "")
+                        if all(k in item_nospace for k in ["붙임", "연구책임자", "대표", "연구실적"]):
+                            if item.get('is_failed', True):
+                                item.update({'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'is_failed': False, 'body_matched': True, 'level': 1})
+                                if '[점검]' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
+                            mapped = True
+                            break
+                    if not mapped:
+                        resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'level': 1, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
+                    continue 
+
                 if CANDIDATE_PATTERN.match(text) or (rx_lvl1 and rx_lvl1.match(text)) or (rx_lvl2 and rx_lvl2.match(text)) or (rx_lvl3 and rx_lvl3.match(text)):
                     if not re.search(r'[가-힣a-zA-Z]', text): continue
                     
@@ -834,7 +841,7 @@ st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
 st.sidebar.header("⚙️ 실행 옵션 설정")
-SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0)
+SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED", "ALL"], index=0)
 TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
 EXCLUDE_FOOTNOTES = st.sidebar.checkbox("3. 하단 각주(Footnote) 강제 배제", value=False)
 
@@ -849,86 +856,90 @@ uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
 
 if 'current_file' not in st.session_state:
     st.session_state.current_file = None
-if 'process_logs' not in st.session_state:
-    st.session_state.process_logs = []
+if 'scan_mode_run' not in st.session_state:
+    st.session_state.scan_mode_run = None
 
 if uploaded_file is not None:
     if st.session_state.current_file != uploaded_file.name:
         st.session_state.current_file = uploaded_file.name
-        st.session_state.extracted_toc = None
-        st.session_state.pdf_data = None
-        st.session_state.process_logs = []
+        st.session_state.scan_mode_run = None
+        for key in ['extracted_toc_single', 'pdf_data_single', 'logs_single', 'extracted_toc_full', 'pdf_data_full', 'logs_full', 'extracted_toc_toc', 'pdf_data_toc', 'logs_toc']:
+            st.session_state.pop(key, None)
 
     if st.button("🚀 책갈피 생성 시작", type="primary"):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_in:
             tmp_in.write(uploaded_file.getvalue())
             tmp_in_path = tmp_in.name
             
-        tmp_out_path = tmp_in_path.replace(".pdf", "_bookmarked.pdf")
-        
-        st.markdown("### 🔄 진행 현황")
-        st_logger = StreamlitLogger()
-        
-        with st.spinner("PDF를 분석하고 책갈피를 생성 중입니다..."):
-            extracted_toc = process_pdf_bookmarks(
-                input_path=tmp_in_path,
-                output_path=tmp_out_path,
-                scan_mode=SCAN_MODE,
-                exclude_footnotes=EXCLUDE_FOOTNOTES,
-                max_depth=TARGET_DEPTH,
-                custom_lvl1=CUSTOM_LVL1,
-                custom_lvl2=CUSTOM_LVL2,
-                custom_lvl3=CUSTOM_LVL3,
-                st_logger=st_logger
-            )
+        st.session_state.scan_mode_run = SCAN_MODE
+
+        if SCAN_MODE == "ALL":
+            tmp_out_full = tmp_in_path.replace(".pdf", "_full.pdf")
+            tmp_out_toc = tmp_in_path.replace(".pdf", "_toc.pdf")
             
-        if extracted_toc:
-            st.session_state.extracted_toc = extracted_toc
-            st.session_state.process_logs = st_logger.logs
-            with open(tmp_out_path, "rb") as f:
-                st.session_state.pdf_data = f.read()
+            col1, col2 = st.columns(2)
+            col1.markdown("#### 🔍 FULL_SCAN 진행 현황")
+            logger_full = StreamlitLogger(col1)
+            col2.markdown("#### 🔍 TOC_BASED 진행 현황")
+            logger_toc = StreamlitLogger(col2)
+            
+            with st.spinner("FULL_SCAN 모드로 분석 중..."):
+                toc_full = process_pdf_bookmarks(tmp_in_path, tmp_out_full, "FULL_SCAN", EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger_full)
+            
+            with st.spinner("TOC_BASED 모드로 분석 중..."):
+                toc_toc = process_pdf_bookmarks(tmp_in_path, tmp_out_toc, "TOC_BASED", EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger_toc)
+            
+            if toc_full and toc_toc:
+                logger_full.finalize(compare_logs=logger_toc.logs)
+                logger_toc.finalize(compare_logs=logger_full.logs)
                 
-        try:
-            os.remove(tmp_in_path)
-            os.remove(tmp_out_path)
-        except OSError:
-            pass
+                st.session_state.logs_full = logger_full.logs
+                st.session_state.logs_toc = logger_toc.logs
+                with open(tmp_out_full, "rb") as f: st.session_state.pdf_data_full = f.read()
+                with open(tmp_out_toc, "rb") as f: st.session_state.pdf_data_toc = f.read()
+                
+            try:
+                os.remove(tmp_in_path)
+                os.remove(tmp_out_full)
+                os.remove(tmp_out_toc)
+            except OSError: pass
 
-    elif st.session_state.get('process_logs'):
-        st.markdown("### 🔄 진행 현황")
-        st.code("\n".join(st.session_state.process_logs), language="text")
-
-    if st.session_state.get('extracted_toc') and st.session_state.get('pdf_data'):
-        st.success("✅ 작업이 완료되었습니다! 아래에서 결과를 확인하고 다운로드하세요.")
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            st.markdown("### 🗂️ 생성된 책갈피 구조")
-            with st.container(height=600):
-                toc_html = "<ul style='list-style-type: none; padding-left: 0;'>"
-                for item in st.session_state.extracted_toc:
-                    level, title, page, _ = item
-                    if level > 0 and title != "끝페이지":
-                        indent = (level - 1) * 20
-                        icon = "📄" if level == 1 else "↳"
-                        
-                        if "[점검]" in title:
-                            title_html = f"<b style='color: red;'>{title}</b>"
-                        else:
-                            title_html = f"<b>{title}</b>"
-                            
-                        toc_html += f"<li style='margin-left: {indent}px; margin-bottom: 8px;'>{icon} {title_html} <span style='color: gray; font-size: 0.9em;'>(p.{page})</span></li>"
-                toc_html += "</ul>"
-                st.markdown(toc_html, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown("### 💾 파일 다운로드")
-            st.info("책갈피(목차)가 삽입된 새로운 PDF 파일입니다.")
+        else:
+            tmp_out_path = tmp_in_path.replace(".pdf", "_bookmarked.pdf")
+            st.markdown("### 🔄 진행 현황")
+            logger = StreamlitLogger()
             
-            st.download_button(
-                label="📥 책갈피가 추가된 PDF 다운로드",
-                data=st.session_state.pdf_data,
-                file_name=f"bookmarked_{uploaded_file.name}",
-                mime="application/pdf",
-                use_container_width=True
-            )
+            with st.spinner("PDF를 분석하고 책갈피를 생성 중입니다..."):
+                extracted_toc = process_pdf_bookmarks(tmp_in_path, tmp_out_path, SCAN_MODE, EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger)
+                
+            if extracted_toc:
+                logger.finalize()
+                st.session_state.logs_single = logger.logs
+                with open(tmp_out_path, "rb") as f: st.session_state.pdf_data_single = f.read()
+                    
+            try:
+                os.remove(tmp_in_path)
+                os.remove(tmp_out_path)
+            except OSError: pass
+
+    # 화면 유지 영역
+    if st.session_state.get('scan_mode_run') == "ALL" and st.session_state.get('pdf_data_full') and st.session_state.get('pdf_data_toc'):
+        col1, col2 = st.columns(2)
+        col1.markdown("#### 🔍 FULL_SCAN 진행 현황")
+        col1.markdown(format_final_logs(st.session_state.logs_full, st.session_state.logs_toc), unsafe_allow_html=True)
+        col2.markdown("#### 🔍 TOC_BASED 진행 현황")
+        col2.markdown(format_final_logs(st.session_state.logs_toc, st.session_state.logs_full), unsafe_allow_html=True)
+        
+        st.success("✅ 'ALL' 모드 작업이 완료되었습니다! 아래에서 개별 다운로드하세요.")
+        st.markdown("### 💾 파일 다운로드")
+        dcol1, dcol2 = st.columns(2)
+        dcol1.download_button("📥 FULL_SCAN 결과 다운로드", st.session_state.pdf_data_full, f"full_scan_{uploaded_file.name}", mime="application/pdf", use_container_width=True)
+        dcol2.download_button("📥 TOC_BASED 결과 다운로드", st.session_state.pdf_data_toc, f"toc_based_{uploaded_file.name}", mime="application/pdf", use_container_width=True)
+
+    elif st.session_state.get('scan_mode_run') in ["FULL_SCAN", "TOC_BASED"] and st.session_state.get('pdf_data_single'):
+        st.markdown("### 🔄 진행 현황")
+        st.markdown(format_final_logs(st.session_state.logs_single), unsafe_allow_html=True)
+        st.success("✅ 작업이 완료되었습니다! 아래에서 결과를 확인하고 다운로드하세요.")
+        
+        st.markdown("### 💾 파일 다운로드")
+        st.download_button("📥 책갈피가 추가된 PDF 다운로드", st.session_state.pdf_data_single, f"bookmarked_{uploaded_file.name}", mime="application/pdf")
