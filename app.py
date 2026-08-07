@@ -118,10 +118,12 @@ TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MUL
 
 KOR_IDX = "가나다라마바사아자차카타파하"
 
+# [수정] 띄어쓰기 및 특수문자가 섞인 유령항목(요약문 등)을 강력하게 포착하는 1줄 추가
 CANDIDATE_PATTERN = re.compile(
     rf'^\s*('
     rf'제\s*\d+\s*[장절][\.\:]?(?:\s+|$)|'
     rf'<?\[?(?:붙임|별첨|부록)\s*\d*\]?(?:\s+|$)|'
+    rf'<?\s*\[?\s*(?:제\s*출\s*문|요\s*약\s*서|요\s*약\s*문|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?(?:\s+|$)|'
     rf'[1-9]\d*(?:\.\d+)+[\.\)]?(?:\s+|$)|'
     rf'[1-9]\d*\.(?:\s+|$)|'
     rf'[1-9]\d*(?=\s+[가-힣a-zA-Z])|'
@@ -377,7 +379,6 @@ def get_seq_info(title):
     if m: return (f"num_dot_{m.group(1)}", int(m.group(2)))
     m = re.match(r'^([1-9]\d*(?:-\d+)*)-([1-9]\d*)[\.\)]?(?:\s+|$)', t)
     if m: return (f"num_dash_sub_{m.group(1).replace('-', '_')}", int(m.group(2)))
-    # [수정] 장(Chapter)에 대한 매칭 추가 (유효성 검사 안정성 확보)
     m = re.match(r'^제?\s*([1-9]\d*)\s*장(?:\s+|$)', t)
     if m: return ('num_jang', int(m.group(1)))
     m = re.match(r'^제?\s*([1-9]\d*)\s*절(?:\s+|$)', t)
@@ -479,8 +480,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         toc_text = re.sub(r'([1-9]\d*-)\s*\n\s*([1-9]\d*)', r'\1\2', toc_text)
         toc_text = re.sub(r'([1-9]\d*\.)\s*\n\s*([가-힣a-zA-Z])', r'\1 \2', toc_text)
-        
-        # [수정] 장/절 줄바꿈 및 페이지 번호 분리 현상 복원
         toc_text = re.sub(r'(제\s*\d+)\s*\n+\s*(장|절)', r'\1\2', toc_text)
         toc_text = re.sub(r'(제\s*\d+\s*[장절])\s*\n+\s*([가-힣a-zA-Z])', r'\1 \2', toc_text)
         toc_text = re.sub(r'([가-힣a-zA-Z\)])\s*\n+\s*(\d+)(?=\s*(\n|$))', r'\1 \2', toc_text)
