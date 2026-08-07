@@ -146,7 +146,6 @@ def fix_broken_characters(text):
     text = text.replace('\uf85e', '·').replace('獜', '·')      
     return re.sub(r'(?<=[가-힣])[^\s가-힣\x20-\x7E·]+(?=[가-힣])', '·', text)
 
-# [수정] 3-depth 기호 옵션 추가
 def parse_custom_format(fmt):
     if not fmt: return None
     escaped = re.escape(fmt.strip())
@@ -347,7 +346,7 @@ def get_sort_key(x):
 # ==========================================
 # 통합 프로세스 로직 
 # ==========================================
-def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, custom_lvl1, custom_lvl2, custom_lvl3, fallback_1depth, st_logger):
+def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, custom_lvl1, custom_lvl2, custom_lvl3, st_logger):
     
     MAX_DEPTH = max_depth
     SCAN_MODE = scan_mode
@@ -793,27 +792,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         resolved_items = strict_items_1_2 + strict_items_3
         resolved_items.sort(key=get_sort_key)
 
-        ########## [웹 옵션 로직] 1-depth 누락 시 하위(2-depth) 페이지로 강제 연결 (Fallback) ##########
-        if fallback_1depth:
-            st_logger.print("\n[옵션 적용] 목차 기반 1-depth 강제 연결 로직 수행 중...")
-            resolved_items.sort(key=lambda x: x.get('toc_idx', 999))
-            
-            for i in range(len(resolved_items)):
-                item = resolved_items[i]
-                if item['level'] == 1 and item.get('is_failed', False):
-                    for j in range(i + 1, len(resolved_items)):
-                        child_item = resolved_items[j]
-                        if child_item['level'] == 1: break
-                        if not child_item.get('is_failed', False):
-                            item['page_idx'] = child_item['page_idx']
-                            item['y0'] = 0.0  
-                            item['is_failed'] = False
-                            if '[점검]' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
-                            break 
-                            
-            resolved_items.sort(key=get_sort_key)
-        ######################################################################################
-
         st_logger.print("\n5. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
         filtered_items, seen_ghosts = [], set()
         for item in resolved_items:
@@ -894,7 +872,6 @@ st.sidebar.header("⚙️ 실행 옵션 설정")
 SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0)
 TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
 EXCLUDE_FOOTNOTES = st.sidebar.checkbox("3. 하단 각주(Footnote) 강제 배제", value=False)
-FALLBACK_1DEPTH = st.sidebar.checkbox("4. 1-depth 누락 시 하위(2-depth) 강제 연결", value=False, help="표 안의 텍스트 분리 등으로 1-depth 본문 매칭이 실패할 경우, 바로 아래 성공한 2-depth 항목이 위치한 페이지의 최상단으로 1-depth를 강제 연결합니다.")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 맞춤형 기호 강제 지정 (옵션)")
@@ -939,7 +916,6 @@ if uploaded_file is not None:
                 custom_lvl1=CUSTOM_LVL1,
                 custom_lvl2=CUSTOM_LVL2,
                 custom_lvl3=CUSTOM_LVL3,
-                fallback_1depth=FALLBACK_1DEPTH,
                 st_logger=st_logger
             )
             
