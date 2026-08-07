@@ -35,7 +35,7 @@ def format_final_logs(logs, compare_logs=None):
             progress_logs.append(line)
 
     # HTML 블록 생성 헬퍼 함수
-    def build_html(log_lines, max_height=None):
+    def build_html(log_lines, max_height=None, is_terminal=False):
         if not log_lines: return ""
         formatted = []
         for line in log_lines:
@@ -57,13 +57,19 @@ def format_final_logs(logs, compare_logs=None):
             formatted.append(out_line)
             
         height_css = f"max-height: {max_height}; overflow-y: auto;" if max_height else "overflow-y: auto;"
-        css = f"font-family: monospace; white-space: pre; overflow-x: auto; {height_css} font-size: 14px; background-color: rgba(128, 128, 128, 0.1); padding: 1rem; border-radius: 0.5rem; margin-bottom: 10px;"
+        
+        # [요청사항 적용] 터미널 모드일 경우 검은 바탕에 흰 글씨 적용
+        if is_terminal:
+            css = f"font-family: monospace; white-space: pre; overflow-x: auto; {height_css} font-size: 14px; background-color: #1e1e1e; color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 10px;"
+        else:
+            css = f"font-family: monospace; white-space: pre; overflow-x: auto; {height_css} font-size: 14px; background-color: rgba(128, 128, 128, 0.1); padding: 1rem; border-radius: 0.5rem; margin-bottom: 10px;"
+            
         return f"<div style='{css}'>" + "\n".join(formatted) + "</div>"
 
-    # 1~4 단계 로그는 150px로 작게 고정 (스크롤)
-    html_progress = build_html(progress_logs, max_height="150px")
-    # 5 단계 이후(책갈피 트리) 로그는 600px로 넓게 보이도록 처리
-    html_tree = build_html(tree_logs, max_height="600px")
+    # 1~4 단계 로그는 150px로 작게 고정 (스크롤), 터미널 테마 적용
+    html_progress = build_html(progress_logs, max_height="150px", is_terminal=True)
+    # 5 단계 이후(책갈피 트리) 로그는 600px로 넓게 보이도록 처리 (기존 유지)
+    html_tree = build_html(tree_logs, max_height="600px", is_terminal=False)
 
     return html_progress + html_tree
 
@@ -852,6 +858,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         st_logger.print("\n5. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
         filtered_items, seen_ghosts = [], set()
+        
         for item in resolved_items:
             clean_title = CLEAN_PATTERN.sub('', item['title']).lower()
             raw_title = item['title'].replace('[점검] ', '').strip()
@@ -927,7 +934,8 @@ st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
 st.sidebar.header("⚙️ 실행 옵션 설정")
-SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED", "ALL"], index=0)
+# [요청사항 적용] 스캔 모드 기본값을 'ALL' (index=2) 로 변경
+SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED", "ALL"], index=2)
 TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
 EXCLUDE_FOOTNOTES = st.sidebar.checkbox("3. 하단 각주(Footnote) 강제 배제", value=False)
 
