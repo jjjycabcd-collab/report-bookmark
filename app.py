@@ -35,15 +35,16 @@ def format_final_logs(logs, compare_logs=None):
             progress_logs.append(line)
 
     # HTML 블록 생성 헬퍼 함수
-    def build_html(log_lines, max_height=None, is_terminal=False):
+    def build_html(log_lines, max_height=None, is_terminal=False, is_tree=False):
         if not log_lines: return ""
         formatted = []
         for line in log_lines:
             out_line = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") # HTML 이스케이프
             
             is_diff = False
-            if flat_compare:
-                if "└──" in line and line not in flat_compare:
+            # [수정] 기호(└──)가 사라졌으므로, 책갈피 트리(is_tree) 영역의 텍스트 자체로 비교
+            if flat_compare and is_tree:
+                if line not in flat_compare:
                     is_diff = True
             
             # [점검] 키워드는 무조건 '붉은색' 처리
@@ -58,7 +59,7 @@ def format_final_logs(logs, compare_logs=None):
             
         height_css = f"max-height: {max_height}; overflow-y: auto;" if max_height else "overflow-y: auto;"
         
-        # [요청사항 적용] 터미널 모드일 경우 검은 바탕에 흰 글씨 적용
+        # 터미널 모드일 경우 검은 바탕에 흰 글씨 적용
         if is_terminal:
             css = f"font-family: monospace; white-space: pre; overflow-x: auto; {height_css} font-size: 14px; background-color: #1e1e1e; color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 10px;"
         else:
@@ -67,9 +68,9 @@ def format_final_logs(logs, compare_logs=None):
         return f"<div style='{css}'>" + "\n".join(formatted) + "</div>"
 
     # 1~4 단계 로그는 150px로 작게 고정 (스크롤), 터미널 테마 적용
-    html_progress = build_html(progress_logs, max_height="150px", is_terminal=True)
+    html_progress = build_html(progress_logs, max_height="150px", is_terminal=True, is_tree=False)
     # 5 단계 이후(책갈피 트리) 로그는 600px로 넓게 보이도록 처리 (기존 유지)
-    html_tree = build_html(tree_logs, max_height="600px", is_terminal=False)
+    html_tree = build_html(tree_logs, max_height="600px", is_terminal=False, is_tree=True)
 
     return html_progress + html_tree
 
@@ -85,7 +86,7 @@ class StreamlitLogger:
     def print(self, *args, **kwargs):
         msg = " ".join(map(str, args))
         self.logs.append(msg)
-        # [수정] 실행 중에도 터미널 느낌(검은 바탕/흰 글씨)의 스크롤 박스로 실시간 출력
+        # 실행 중에도 터미널 느낌(검은 바탕/흰 글씨)의 스크롤 박스로 실시간 출력
         safe_logs = [line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") for line in self.logs]
         css = "font-family: monospace; white-space: pre; overflow-x: auto; max-height: 150px; overflow-y: auto; font-size: 14px; background-color: #1e1e1e; color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 10px;"
         self.placeholder.markdown(f"<div style='{css}'>" + "\n".join(safe_logs) + "</div>", unsafe_allow_html=True)
@@ -920,9 +921,11 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             new_toc.append([target_level, item['title'], safe_page, dest_dict])
             prev_level = target_level
             
-            st_logger.print(f"{'    ' * (target_level - 1)}└── {item['title']} ({safe_page}p)")
+            # [수정] 기호(└──)와 태그([n-depth])를 제거하고 순수 들여쓰기 텍스트만 출력
+            indent = '    ' * (target_level - 1)
+            st_logger.print(f"{indent}{item['title']} ({safe_page}p)")
 
-        st_logger.print(f"└── 끝페이지 ({total_pages}p)")
+        st_logger.print(f"끝페이지 ({total_pages}p)")
         new_toc.append([1, "끝페이지", total_pages, {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, 0)}])
         
         doc.set_toc(new_toc)
