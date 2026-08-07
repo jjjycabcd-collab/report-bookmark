@@ -42,7 +42,6 @@ def format_final_logs(logs, compare_logs=None):
             out_line = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") # HTML 이스케이프
             
             is_diff = False
-            # [수정] 기호(└──)가 사라졌으므로, 책갈피 트리(is_tree) 영역의 텍스트 자체로 비교
             if flat_compare and is_tree:
                 if line not in flat_compare:
                     is_diff = True
@@ -378,6 +377,9 @@ def get_seq_info(title):
     if m: return (f"num_dot_{m.group(1)}", int(m.group(2)))
     m = re.match(r'^([1-9]\d*(?:-\d+)*)-([1-9]\d*)[\.\)]?(?:\s+|$)', t)
     if m: return (f"num_dash_sub_{m.group(1).replace('-', '_')}", int(m.group(2)))
+    # [수정] 장(Chapter)에 대한 매칭 추가 (유효성 검사 안정성 확보)
+    m = re.match(r'^제?\s*([1-9]\d*)\s*장(?:\s+|$)', t)
+    if m: return ('num_jang', int(m.group(1)))
     m = re.match(r'^제?\s*([1-9]\d*)\s*절(?:\s+|$)', t)
     if m: return ('num_jeol', int(m.group(1)))
     m = re.match(r'^\(\s*([1-9]\d*)\s*\)(?:\s+|$)', t)
@@ -477,6 +479,11 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         toc_text = re.sub(r'([1-9]\d*-)\s*\n\s*([1-9]\d*)', r'\1\2', toc_text)
         toc_text = re.sub(r'([1-9]\d*\.)\s*\n\s*([가-힣a-zA-Z])', r'\1 \2', toc_text)
+        
+        # [수정] 장/절 줄바꿈 및 페이지 번호 분리 현상 복원
+        toc_text = re.sub(r'(제\s*\d+)\s*\n+\s*(장|절)', r'\1\2', toc_text)
+        toc_text = re.sub(r'(제\s*\d+\s*[장절])\s*\n+\s*([가-힣a-zA-Z])', r'\1 \2', toc_text)
+        toc_text = re.sub(r'([가-힣a-zA-Z\)])\s*\n+\s*(\d+)(?=\s*(\n|$))', r'\1 \2', toc_text)
 
         raw_items, parsed_titles = [], set()
         for match in TOC_PATTERN.finditer(toc_text):
@@ -921,7 +928,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             new_toc.append([target_level, item['title'], safe_page, dest_dict])
             prev_level = target_level
             
-            # [수정] 기호(└──)와 태그([n-depth])를 제거하고 순수 들여쓰기 텍스트만 출력
             indent = '    ' * (target_level - 1)
             st_logger.print(f"{indent}{item['title']} ({safe_page}p)")
 
