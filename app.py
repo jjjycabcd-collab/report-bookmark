@@ -176,6 +176,8 @@ def extract_prefix(t, custom_regex_1=None, custom_regex_2=None, custom_regex_3=N
 
 def is_ghost_title(clean_t):
     clean_t = clean_t.lower()
+    if '영문목차' in clean_t: return True
+    if '영문요약서' in clean_t: return True
     for g in ['제출문', '요약서', '요약문', '표지', '목차', '참고문헌']:
         if g in clean_t and len(clean_t) <= len(g) + 8: return True
         if g == '요약문' and '요약문' in clean_t: return True
@@ -186,6 +188,8 @@ def is_ghost_title(clean_t):
 def is_restricted_1depth(clean_title):
     if not clean_title: return False
     clean_title = clean_title.lower()
+    if '영문목차' in clean_title: return True
+    if '영문요약서' in clean_title: return True
     for g in ['표지', '제출문', '요약서', '요약문', '목차', '참고문헌']:
         if g in clean_title and len(clean_title) <= len(g) + 12: return True
         if g == '요약문' and '요약문' in clean_title: return True
@@ -344,7 +348,7 @@ def get_sort_key(x):
     return (x['page_idx'], y_val, t_val)
 
 # ==========================================
-# 통합 프로세스 로직 
+# 통합 프로세스 로직
 # ==========================================
 def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, custom_lvl1, custom_lvl2, custom_lvl3, st_logger):
     
@@ -523,30 +527,58 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         global_font_trackers = {'depth1': 0.0}
 
-        st_logger.print("\n3. 본문 스캔(FULL_SCAN) 및 폰트/플래그 프로파일링 중...")
+        st_logger.print("\n3. 유령 항목(제출문, 요약서, 참고문헌 등) 전체 본문 스캔 및 구출 중...")
+        
+        # [수정] ghost_rules를 정확하게 지정하고, 영문목차는 제외
+        ghost_rules = [
+            (re.compile(r'제\s*출\s*문'), '제출문'),
+            (re.compile(r'보\s*고\s*서\s*요\s*약\s*서|요\s*약\s*서'), '요약서'),
+            (re.compile(r'요\s*약\s*문'), '요약문'),
+            (re.compile(r'영\s*문\s*요\s*약\s*서|S\s*U\s*M\s*M\s*A\s*R\s*Y', re.IGNORECASE), 'Summary'),
+            (re.compile(r'C\s*O\s*N\s*T\s*E\s*N\s*T\s*S', re.IGNORECASE), 'Contents'),
+            (re.compile(r'참\s*고\s*문\s*헌'), '참고문헌')
+        ]
+        
+        existing_titles = [CLEAN_PATTERN.sub('', re.sub(r'^[0-9가-하]+[\.\)]?\s*', '', p['title'].replace('[점검] ', ''))).lower() for p in resolved_items if not p['is_failed']]
+        found_ghosts = set()
+        
+        for p_idx in range(total_pages): 
+            if toc_page_idx != -1 and toc_page_idx <= p_idx <= toc_end_idx: continue 
+            for b in cache.get_blocks(p_idx):
+                text = fix_broken_characters(b[4].strip())
+                for rule_pattern, display_text in ghost_rules:
+                    if display_text in found_ghosts: continue
+                    if len(text) < 40 and rule_pattern.search(text):
+                        rescued = False
+                        for item in resolved_items:
+                            if item['is_failed'] and item['level'] == 1:
+                                raw_title = item['title'].replace('[점검] ', '').strip()
+                                if re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title): continue
+                                    
+                                clean_title = CLEAN_PATTERN.sub('', item['title']).lower()
+                                if display_text.lower() in clean_title or "요약" in clean_title:
+                                    item['page_idx'] = p_idx
+                                    item['y0'] = b[1]
+                                    item['is_failed'] = False
+                                    item['body_matched'] = True
+                                    if '[점검]' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
+                                    rescued = True
+                                    break
+                        if not rescued:
+                            clean_display = CLEAN_PATTERN.sub('', display_text).lower()
+                            if clean_display not in existing_titles:
+                                resolved_items.append({'toc_idx': -1, 'title': display_text, 'page_idx': p_idx, 'y0': b[1], 'f_size': 0.0, 'flags': 0, 'color': 0, 'level': 1, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
+                                existing_titles.append(clean_display)
+                        found_ghosts.add(display_text)
+                        break
+
+        st_logger.print("\n4. 본문 스캔(FULL_SCAN) 및 폰트/플래그 프로파일링 중...")
         for p_idx in range(toc_end_idx + 1, total_pages):
             for line in cache.get_valid_lines(p_idx):
                 text, y0, max_size, main_flags, main_color, is_desc = line['text'], line['y0'], line['max_size'], line['flags'], line['color'], line['is_desc']
                 
                 if re.match(r'^\s*<*(표|그림|Table|Fig)[\.\s]*\d+', text, re.IGNORECASE): continue
                 
-                text_nospace = text.replace(" ", "")
-                is_special_kws_match = all(k in text_nospace for k in ["붙임", "연구책임자", "대표", "연구실적"])
-                
-                if is_special_kws_match:
-                    mapped = False
-                    for item in resolved_items:
-                        item_nospace = item['title'].replace('[점검] ', '').replace(" ", "")
-                        if all(k in item_nospace for k in ["붙임", "연구책임자", "대표", "연구실적"]):
-                            if item.get('is_failed', True):
-                                item.update({'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'is_failed': False, 'body_matched': True, 'level': 1})
-                                if '[점검]' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
-                            mapped = True
-                            break
-                    if not mapped:
-                        resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'level': 1, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
-                    continue 
-
                 if CANDIDATE_PATTERN.match(text) or (rx_lvl1 and rx_lvl1.match(text)) or (rx_lvl2 and rx_lvl2.match(text)) or (rx_lvl3 and rx_lvl3.match(text)):
                     if not re.search(r'[가-힣a-zA-Z]', text): continue
                     
@@ -612,28 +644,17 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         resolved_items.sort(key=get_sort_key)
 
-        # ----------------------------------------------------
-        # [Step 4-A] 1, 2-depth 강력한 시퀀스 유효성 검증 (3-depth 원천 배제)
-        # ----------------------------------------------------
         st_logger.print("\n4-A. [최종 방어선] 1-depth, 2-depth 시퀀스/페이지 역전 검증 및 영구 잠금 중...")
         strict_items_1_2 = []
-        
-        current_1d_title = None
-        current_2d_title = None
-        
+        current_1d_title, current_2d_title = None, None
         current_seq_state = {1: 0, 2: 0}
         current_seq_type = {1: None, 2: None}
         current_font_profile = {2: None} 
-        
         is_current_1d_failed = False
-        
-        depth1_type = None
-        depth1_last_num = 0
-        depth1_last_page = -1
+        depth1_type, depth1_last_num, depth1_last_page = None, 0, -1
 
         for item in resolved_items:
             lvl = item['level']
-            # 3-depth 후보는 1단계 검증에서 완전히 제외하여 1,2-depth 오염을 막음
             if lvl not in [1, 2, 99]: continue 
             
             title = item['title']
@@ -644,10 +665,8 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 if lvl == 1: 
                     current_1d_title = title
                     is_current_1d_failed = '[점검]' in title
-                    current_seq_state = {1: 0, 2: 0}
-                    current_seq_type = {1: None, 2: None}
-                    current_font_profile = {2: None}
-                    depth1_type = None; depth1_last_num = 0; depth1_last_page = -1
+                    current_seq_state, current_seq_type, current_font_profile = {1: 0, 2: 0}, {1: None, 2: None}, {2: None}
+                    depth1_type, depth1_last_num, depth1_last_page = None, 0, -1
                 continue
                 
             st_type, sn = get_seq_info(title.replace('[점검] ', ''))
@@ -656,163 +675,113 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 is_valid_1depth = True
                 if st_type and sn is not None:
                     if depth1_type is None:
-                        depth1_type = st_type
-                        depth1_last_num = sn
-                        depth1_last_page = item['page_idx']
+                        depth1_type, depth1_last_num, depth1_last_page = st_type, sn, item['page_idx']
                     else:
                         if st_type == depth1_type:
                             if sn > depth1_last_num and item['page_idx'] >= depth1_last_page:
-                                depth1_last_num = sn
-                                depth1_last_page = item['page_idx']
+                                depth1_last_num, depth1_last_page = sn, item['page_idx']
                             elif sn <= depth1_last_num or item['page_idx'] < depth1_last_page:
                                 is_valid_1depth = False
                                 st_logger.print(f"  -> [경고] 1-depth 순서/페이지 역전 감지됨: '{title}' (배제 처리)")
                         else:
-                            depth1_type = st_type
-                            depth1_last_num = sn
-                            depth1_last_page = item['page_idx']
+                            depth1_type, depth1_last_num, depth1_last_page = st_type, sn, item['page_idx']
 
                 if is_valid_1depth:
-                    current_1d_title = title
-                    current_2d_title = None 
+                    current_1d_title, current_2d_title = title, None 
                     is_current_1d_failed = '[점검]' in title
-                    current_seq_state = {1: 0, 2: 0}
-                    current_seq_type = {1: None, 2: None}
-                    current_font_profile = {2: None}
+                    current_seq_state, current_seq_type, current_font_profile = {1: 0, 2: 0}, {1: None, 2: None}, {2: None}
                     strict_items_1_2.append(item)
-                else:
-                    continue
+                else: continue
                 
             elif lvl == 2:
-                if is_current_1d_failed: continue 
-                if not current_1d_title: continue
+                if is_current_1d_failed or not current_1d_title: continue
 
-                is_jump_error = False
-                skip_item = False
+                is_jump_error, skip_item = False, False
                 item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0))
                 
                 if sn is not None and st_type is not None:
                     if current_seq_type[lvl] is None:
                         if sn > 1: is_jump_error = True
-                        current_seq_type[lvl] = st_type
-                        current_seq_state[lvl] = sn
-                        current_font_profile[lvl] = item_profile
+                        current_seq_type[lvl], current_seq_state[lvl], current_font_profile[lvl] = st_type, sn, item_profile
                     else:
-                        if st_type != current_seq_type[lvl]: skip_item = True
-                        elif sn <= current_seq_state[lvl]: skip_item = True
-                        elif sn > current_seq_state[lvl] + 1: skip_item = True
+                        if st_type != current_seq_type[lvl] or sn <= current_seq_state[lvl] or sn > current_seq_state[lvl] + 1: skip_item = True
                         else:
-                            base_profile = current_font_profile[lvl]
-                            if base_profile:
-                                b_size, b_flags, b_color = base_profile
+                            if current_font_profile[lvl]:
+                                b_size, b_flags, b_color = current_font_profile[lvl]
                                 i_size, i_flags, i_color = item_profile
-                                if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
-                                    skip_item = True
-                                    
-                        if not skip_item and not is_jump_error:
-                            current_seq_state[lvl] = sn
-                else:
-                    skip_item = True
+                                if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color: skip_item = True
+                        if not skip_item and not is_jump_error: current_seq_state[lvl] = sn
+                else: skip_item = True
 
                 if skip_item: continue 
-                            
-                if is_jump_error:
-                    if not item['title'].startswith('[점검]'):
-                        item['title'] = "[점검] " + item['title']
-                
+                if is_jump_error and not item['title'].startswith('[점검]'): item['title'] = "[점검] " + item['title']
                 strict_items_1_2.append(item)
 
-        # ----------------------------------------------------
-        # [Step 4-B] 3-depth 독립 시퀀스 유효성 검증 (1, 2-depth 완전 보존)
-        # ----------------------------------------------------
         strict_items_3 = []
         if MAX_DEPTH >= 3:
             st_logger.print("\n4-B. [독립 스캔] 3-depth 시퀀스 유효성 검증 중 (1, 2-depth 보존)...")
-            
-            # 확정된 1, 2-depth 리스트에 3-depth 후보만 병합하여 순회
             merged_for_pass2 = strict_items_1_2 + [i for i in resolved_items if i['level'] == 3]
             merged_for_pass2.sort(key=get_sort_key)
             
-            current_2d_valid = False
-            current_seq_state_3 = 0
-            current_seq_type_3 = None
-            current_font_profile_3 = None
+            current_2d_valid, current_seq_state_3, current_seq_type_3, current_font_profile_3 = False, 0, None, None
             
             for item in merged_for_pass2:
                 lvl = item['level']
-                if lvl == 1:
-                    current_2d_valid = False
-                    current_seq_state_3 = 0
-                    current_seq_type_3 = None
-                    current_font_profile_3 = None
-                elif lvl == 2:
-                    current_2d_valid = True
-                    current_seq_state_3 = 0
-                    current_seq_type_3 = None
-                    current_font_profile_3 = None
+                if lvl == 1: current_2d_valid, current_seq_state_3, current_seq_type_3, current_font_profile_3 = False, 0, None, None
+                elif lvl == 2: current_2d_valid, current_seq_state_3, current_seq_type_3, current_font_profile_3 = True, 0, None, None
                 elif lvl == 3:
                     if not current_2d_valid: continue 
-                    
                     st_type, sn = get_seq_info(item['title'].replace('[점검] ', ''))
-                    is_jump_error = False
-                    skip_item = False
+                    is_jump_error, skip_item = False, False
                     item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0))
                     
                     if sn is not None and st_type is not None:
                         if current_seq_type_3 is None:
                             if sn > 1: is_jump_error = True
-                            current_seq_type_3 = st_type
-                            current_seq_state_3 = sn
-                            current_font_profile_3 = item_profile
+                            current_seq_type_3, current_seq_state_3, current_font_profile_3 = st_type, sn, item_profile
                         else:
-                            if st_type != current_seq_type_3: skip_item = True
-                            elif sn <= current_seq_state_3: skip_item = True
-                            elif sn > current_seq_state_3 + 1: skip_item = True
+                            if st_type != current_seq_type_3 or sn <= current_seq_state_3 or sn > current_seq_state_3 + 1: skip_item = True
                             else:
-                                base_profile = current_font_profile_3
-                                if base_profile:
-                                    b_size, b_flags, b_color = base_profile
+                                if current_font_profile_3:
+                                    b_size, b_flags, b_color = current_font_profile_3
                                     i_size, i_flags, i_color = item_profile
-                                    if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
-                                        skip_item = True
-                            if not skip_item and not is_jump_error:
-                                current_seq_state_3 = sn
-                    else:
-                        skip_item = True
+                                    if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color: skip_item = True
+                            if not skip_item and not is_jump_error: current_seq_state_3 = sn
+                    else: skip_item = True
                         
                     if skip_item: continue
-                    
-                    if is_jump_error:
-                        if not item['title'].startswith('[점검]'):
-                            item['title'] = "[점검] " + item['title']
-                            
+                    if is_jump_error and not item['title'].startswith('[점검]'): item['title'] = "[점검] " + item['title']
                     strict_items_3.append(item)
                     
-        # 1,2-depth 확정본과 3-depth 확정본을 안전하게 결합
         resolved_items = strict_items_1_2 + strict_items_3
         resolved_items.sort(key=get_sort_key)
 
         st_logger.print("\n5. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
         filtered_items, seen_ghosts = [], set()
+        
         for item in resolved_items:
             clean_title = CLEAN_PATTERN.sub('', item['title']).lower()
             raw_title = item['title'].replace('[점검] ', '').strip()
             ghost_key = None
             
+            # [수정] 사용자가 요청한 "영문목차는 무시" 로직
+            if '영문목차' in clean_title: continue
+            
             if not re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title):
-                for g in ['제출문', '요약서', '요약문', '참고문헌']:
-                    if g in clean_title:
-                        if g == '요약문' and '요약문' in clean_title: ghost_key = g; break
-                        if len(clean_title) <= len(g) + 12: ghost_key = g; break
-                if not ghost_key:
-                    for g in ['summary', 'contents', 'content']:
-                        if g in clean_title and len(clean_title) <= len(g) + 5 and not re.search(r'[가-힣]', clean_title):
-                            ghost_key = 'Summary' if g == 'summary' else 'Contents'; break
+                if '영문요약서' in clean_title or ('summary' in clean_title and not re.search(r'[가-힣]', clean_title)):
+                    ghost_key = 'Summary'
+                elif ('contents' in clean_title or 'content' in clean_title) and not re.search(r'[가-힣]', clean_title):
+                    ghost_key = 'Contents'
+                else:
+                    for g in ['제출문', '요약서', '요약문', '참고문헌']:
+                        if g in clean_title:
+                            if g == '요약문' and '요약문' in clean_title: ghost_key = g; break
+                            if len(clean_title) <= len(g) + 12: ghost_key = g; break
                     
             if ghost_key:
                 if ghost_key in seen_ghosts: continue  
                 seen_ghosts.add(ghost_key)
-                item['title'] = '참고문헌' if ghost_key == '참고문헌' else ghost_key
+                item['title'] = ghost_key
                 item['level'] = 1 
                 filtered_items.append(item)
             elif any(x in clean_title for x in ['표지', '목차']) and len(clean_title) <= 10: continue 
@@ -841,14 +810,11 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             y0_coord = max(0, item['y0'] - 20)
             dest_dict = {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, y0_coord)}
             
-            # [안전장치] 예측된 페이지가 전체 PDF 페이지 수를 초과하지 않도록 강제 제한
             safe_page = min(item['page_idx'] + 1, total_pages)
-            
             new_toc.append([target_level, item['title'], safe_page, dest_dict])
             prev_level = target_level
             st_logger.print(f"{'  ' * (target_level - 1)}└── [{target_level}-depth] {item['title']} ({safe_page}p)")
 
-        # [추가] 로그에 끝페이지 출력
         st_logger.print(f"└── [1-depth] 끝페이지 ({total_pages}p)")
         new_toc.append([1, "끝페이지", total_pages, {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, 0)}])
         
@@ -867,7 +833,6 @@ st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
-# 사이드바: 실행 옵션 (사용자가 원하는 순서대로 배치)
 st.sidebar.header("⚙️ 실행 옵션 설정")
 SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0)
 TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
@@ -882,14 +847,12 @@ CUSTOM_LVL3 = st.sidebar.text_input("3-depth (소분류) 기호", value="", plac
 
 uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
 
-# 세션 상태 초기화 (다운로드 시 화면 유지 및 새 파일 업로드 시 초기화용)
 if 'current_file' not in st.session_state:
     st.session_state.current_file = None
 if 'process_logs' not in st.session_state:
     st.session_state.process_logs = []
 
 if uploaded_file is not None:
-    # 파일이 변경되었는지 체크하여 세션 초기화
     if st.session_state.current_file != uploaded_file.name:
         st.session_state.current_file = uploaded_file.name
         st.session_state.extracted_toc = None
@@ -920,25 +883,21 @@ if uploaded_file is not None:
             )
             
         if extracted_toc:
-            # 성공한 결과를 세션 상태에 보관
             st.session_state.extracted_toc = extracted_toc
-            st.session_state.process_logs = st_logger.logs  # 진행 로그 백업
+            st.session_state.process_logs = st_logger.logs
             with open(tmp_out_path, "rb") as f:
                 st.session_state.pdf_data = f.read()
                 
-        # 임시 파일 삭제
         try:
             os.remove(tmp_in_path)
             os.remove(tmp_out_path)
         except OSError:
             pass
 
-    # 다운로드 버튼 클릭 등으로 재실행(리런)되었을 때 진행 현황 로그 복구
     elif st.session_state.get('process_logs'):
         st.markdown("### 🔄 진행 현황")
         st.code("\n".join(st.session_state.process_logs), language="text")
 
-    # 처리 결과가 세션에 존재하면 화면에 렌더링 (다운로드 버튼을 눌러도 사라지지 않음)
     if st.session_state.get('extracted_toc') and st.session_state.get('pdf_data'):
         st.success("✅ 작업이 완료되었습니다! 아래에서 결과를 확인하고 다운로드하세요.")
         col1, col2 = st.columns([1, 1])
