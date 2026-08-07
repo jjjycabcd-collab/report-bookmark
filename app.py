@@ -2,9 +2,9 @@ import streamlit as st
 import fitz  # PyMuPDF
 import re
 import os
-import difflib
 import unicodedata
 import tempfile
+import time
 
 # ==========================================
 # [스트림릿 로깅 클래스]
@@ -20,7 +20,7 @@ class StreamlitLogger:
         self.placeholder.code("\n".join(self.logs), language="text")
 
 # ==========================================
-# 유사도 검사 라이브러리 지원
+# 유사도 검사 라이브러리 지원 (rapidfuzz 없으면 difflib 사용)
 # ==========================================
 try:
     from rapidfuzz import fuzz
@@ -146,7 +146,7 @@ def fix_broken_characters(text):
     text = text.replace('\uf85e', '·').replace('獜', '·')      
     return re.sub(r'(?<=[가-힣])[^\s가-힣\x20-\x7E·]+(?=[가-힣])', '·', text)
 
-# 사용자 입력 기호 변환
+# [웹 연동] 맞춤형 기호 변환
 def parse_custom_format(fmt):
     if not fmt: return None
     escaped = re.escape(fmt.strip())
@@ -156,6 +156,7 @@ def parse_custom_format(fmt):
     escaped = escaped.replace('a', r'[a-z]')
     return re.compile(rf'^\s*({escaped})(?:\s+|$)')
 
+# [웹 연동] 맞춤형 기호 추가
 def extract_prefix(t, custom_regex_1=None, custom_regex_2=None):
     t = t.replace('[점검]', '').strip()
     m = re.match(r'^\s*(<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?)', t)
@@ -272,9 +273,18 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         if max_depth >= 3 and is_3depth_in_jang(t): return 3
         return 99 
         
-    if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+[\.\)]?', t): return 3
-    if max_depth >= 3 and (re.match(r'^[1-9]\d*[\)）](?:\s+|$)', t) or re.match(r'^\([1-9]\d*\)(?:\s+|$)', t)): return 3
-    if re.match(r'^제\s*\d+\s*절', t) or re.match(r'^[1-9]\d*\.\d+[\.\s]?', t) or re.match(r'^[1-9]\d*-\d+[\.\)]?', t) or re.match(r'^[A-Z][\.\)]\s*', t): return 2 
+    if re.match(r'^[1-9]\d*\.\d+\.\d+', t): return 3
+    if re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t): return 3
+    if re.match(rf'^[{KOR_IDX}]-\d+[\.\)]?', t): return 3
+    
+    if max_depth >= 3:
+        if re.match(r'^[1-9]\d*[\)）](?:\s+|$)', t): return 3
+        if re.match(r'^\([1-9]\d*\)(?:\s+|$)', t): return 3
+    if re.match(r'^제\s*\d+\s*절', t): return 2
+    if re.match(r'^[1-9]\d*\.\d+[\.\s]?', t): return 2 
+    if re.match(r'^[1-9]\d*-\d+[\.\)]?', t): return 2 
+    if re.match(r'^[A-Z][\.\)]\s*', t): return 2 
+    
     if re.match(r'^[1-9]\d*\.(?:\s+|$)', t) or re.match(r'^[1-9]\d*\s+[가-힣a-zA-Z]', t):
         if font_size > 0.0 and font_trackers is not None:
             if font_trackers.get('depth1', 0.0) == 0.0: font_trackers['depth1'] = font_size
@@ -296,11 +306,11 @@ def get_seq_info(title):
     if m: return ('num_paren_both', int(m.group(1)))
     m = re.match(r'^([1-9]\d*)\s*[\)）](?:\s+|$)', t)
     if m: return ('num_paren_right', int(m.group(1)))
-    m = re.match(rf'^([{KOR_IDX}])\s*\.(?:\s*|$)', t)
+    m = re.match(rf'^([{KOR_IDX}])\s*\.(?:\s+|$)', t)
     if m: return ('kor_dot', KOR_MAP.get(m.group(1)))
-    m = re.match(rf'^([{KOR_IDX}])\s*[\)）](?:\s*|$)', t)
+    m = re.match(rf'^([{KOR_IDX}])\s*[\)）](?:\s+|$)', t)
     if m: return ('kor_paren_right', KOR_MAP.get(m.group(1)))
-    m = re.match(rf'^\(\s*([{KOR_IDX}])\s*\)(?:\s*|$)', t)
+    m = re.match(rf'^\(\s*([{KOR_IDX}])\s*\)(?:\s+|$)', t)
     if m: return ('kor_paren_both', KOR_MAP.get(m.group(1)))
     m = re.match(r'^([1-9]\d*)\s*\.(?:\s*|$)', t)
     if m: return ('num_dot', int(m.group(1)))
@@ -337,7 +347,7 @@ def get_sort_key(x):
     return (x['page_idx'], y_val, t_val)
 
 # ==========================================
-# 통합 프로세스 로직 (PC버전 완벽 통합본)
+# 통합 프로세스 로직
 # ==========================================
 def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, custom_lvl1, custom_lvl2, fallback_1depth, st_logger):
     
@@ -349,7 +359,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
     
     with fitz.open(input_path) as doc:
         total_pages = len(doc)
-        st_logger.print(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {MAX_DEPTH}-depth 적용")
+        st_logger.print(f"-> 총 {total_pages}페이지 확인됨. 최대 추출 깊이: {MAX_DEPTH}-depth 수동 적용")
         
         cache = PageCache(doc, exclude_footnotes)
 
@@ -522,7 +532,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 
                 if re.match(r'^\s*<*(표|그림|Table|Fig)[\.\s]*\d+', text, re.IGNORECASE): continue
                 
-                # [강제연결 특수 매핑 로직 완벽 유지]
                 text_nospace = text.replace(" ", "")
                 is_special_kws_match = all(k in text_nospace for k in ["붙임", "연구책임자", "대표", "연구실적"])
                 
@@ -616,7 +625,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         
         is_current_1d_failed = False
         
-        # [유효성 검사 추가 반영] 1-depth 시퀀스 및 페이지 역전 검증 
         depth1_type = None
         depth1_last_num = 0
         depth1_last_page = -1
@@ -797,6 +805,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             st_logger.print(f"{'  ' * (target_level - 1)}└── [{target_level}-depth] {item['title']} ({item['page_idx'] + 1}p)")
 
         new_toc.append([1, "끝페이지", total_pages, {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, 0)}])
+        st_logger.print(f"└── [1-depth] 끝페이지 ({total_pages}p)")
         doc.set_toc(new_toc)
         doc.save(output_path)
 
@@ -812,7 +821,7 @@ st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
-# 사이드바: 실행 옵션 (사용자가 원하는 순서대로 배치)
+# 사이드바: 실행 옵션
 st.sidebar.header("⚙️ 실행 옵션 설정")
 SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0)
 TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
@@ -827,12 +836,10 @@ CUSTOM_LVL2 = st.sidebar.text_input("2-depth (중분류) 기호", value="")
 
 uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
 
-# 세션 상태 초기화 (새로운 파일 업로드 시 기존 데이터 초기화)
 if 'current_file' not in st.session_state:
     st.session_state.current_file = None
 
 if uploaded_file is not None:
-    # 파일이 변경되었는지 체크하여 세션 초기화
     if st.session_state.current_file != uploaded_file.name:
         st.session_state.current_file = uploaded_file.name
         st.session_state.extracted_toc = None
@@ -862,19 +869,16 @@ if uploaded_file is not None:
             )
             
         if extracted_toc:
-            # 성공한 결과를 세션 상태에 보관
             st.session_state.extracted_toc = extracted_toc
             with open(tmp_out_path, "rb") as f:
                 st.session_state.pdf_data = f.read()
                 
-        # 임시 파일 삭제
         try:
             os.remove(tmp_in_path)
             os.remove(tmp_out_path)
         except OSError:
             pass
 
-    # 처리 결과가 세션에 존재하면 화면에 렌더링 (다운로드 버튼을 눌러도 사라지지 않음)
     if st.session_state.get('extracted_toc') and st.session_state.get('pdf_data'):
         st.success("✅ 작업이 완료되었습니다! 아래에서 결과를 확인하고 다운로드하세요.")
         col1, col2 = st.columns([1, 1])
