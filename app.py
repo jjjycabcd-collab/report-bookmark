@@ -146,6 +146,7 @@ def fix_broken_characters(text):
     text = text.replace('\uf85e', '·').replace('獜', '·')      
     return re.sub(r'(?<=[가-힣])[^\s가-힣\x20-\x7E·]+(?=[가-힣])', '·', text)
 
+# 사용자 입력 기호 변환
 def parse_custom_format(fmt):
     if not fmt: return None
     escaped = re.escape(fmt.strip())
@@ -271,8 +272,13 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         if max_depth >= 3 and is_3depth_in_jang(t): return 3
         return 99 
         
-    if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+[\.\)]?', t): return 3
-    if max_depth >= 3 and (re.match(r'^[1-9]\d*[\)）](?:\s+|$)', t) or re.match(r'^\([1-9]\d*\)(?:\s+|$)', t)): return 3
+    if re.match(r'^[1-9]\d*\.\d+\.\d+', t): return 3
+    if re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t): return 3
+    if re.match(rf'^[{KOR_IDX}]-\d+[\.\)]?', t): return 3
+    
+    if max_depth >= 3:
+        if re.match(r'^[1-9]\d*[\)）](?:\s+|$)', t): return 3
+        if re.match(r'^\([1-9]\d*\)(?:\s+|$)', t): return 3
     if re.match(r'^제\s*\d+\s*절', t): return 2
     if re.match(r'^[1-9]\d*\.\d+[\.\s]?', t): return 2 
     if re.match(r'^[1-9]\d*-\d+[\.\)]?', t): return 2 
@@ -793,16 +799,12 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             y0_coord = max(0, item['y0'] - 20)
             dest_dict = {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, y0_coord)}
             
-            # [안전장치] 페이지 초과 에러 방지 (ValueError: page number out of range)
-            target_page = item['page_idx'] + 1
-            if target_page > total_pages:
-                target_page = total_pages
-            elif target_page < 1:
-                target_page = 1
-                
-            new_toc.append([target_level, item['title'], target_page, dest_dict])
+            # [안전장치] 예측된 페이지가 전체 PDF 페이지 수를 초과하지 않도록 강제 제한
+            safe_page = min(item['page_idx'] + 1, total_pages)
+            
+            new_toc.append([target_level, item['title'], safe_page, dest_dict])
             prev_level = target_level
-            st_logger.print(f"{'  ' * (target_level - 1)}└── [{target_level}-depth] {item['title']} ({target_page}p)")
+            st_logger.print(f"{'  ' * (target_level - 1)}└── [{target_level}-depth] {item['title']} ({safe_page}p)")
 
         # [추가] 로그에 끝페이지 출력
         st_logger.print(f"└── [1-depth] 끝페이지 ({total_pages}p)")
@@ -823,7 +825,7 @@ st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
-# 사이드바: 실행 옵션 (사용자가 원하는 순서대로 배치)
+# 사이드바: 실행 옵션
 st.sidebar.header("⚙️ 실행 옵션 설정")
 SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED"], index=0)
 TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
@@ -838,9 +840,11 @@ CUSTOM_LVL2 = st.sidebar.text_input("2-depth (중분류) 기호", value="")
 
 uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
 
-# 세션 상태 초기화 (새로운 파일 업로드 시 기존 데이터 초기화)
+# 세션 상태 초기화 (다운로드 시 화면 유지 및 새 파일 업로드 시 초기화용)
 if 'current_file' not in st.session_state:
     st.session_state.current_file = None
+if 'process_logs' not in st.session_state:
+    st.session_state.process_logs = []
 
 if uploaded_file is not None:
     # 파일이 변경되었는지 체크하여 세션 초기화
@@ -848,6 +852,7 @@ if uploaded_file is not None:
         st.session_state.current_file = uploaded_file.name
         st.session_state.extracted_toc = None
         st.session_state.pdf_data = None
+        st.session_state.process_logs = []
 
     if st.button("🚀 책갈피 생성 시작", type="primary"):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_in:
@@ -875,6 +880,7 @@ if uploaded_file is not None:
         if extracted_toc:
             # 성공한 결과를 세션 상태에 보관
             st.session_state.extracted_toc = extracted_toc
+            st.session_state.process_logs = st_logger.logs  # 진행 로그 백업
             with open(tmp_out_path, "rb") as f:
                 st.session_state.pdf_data = f.read()
                 
@@ -884,6 +890,11 @@ if uploaded_file is not None:
             os.remove(tmp_out_path)
         except OSError:
             pass
+
+    # 다운로드 버튼 클릭 등으로 재실행(리런)되었을 때 진행 현황 로그 복구
+    elif st.session_state.get('process_logs'):
+        st.markdown("### 🔄 진행 현황")
+        st.code("\n".join(st.session_state.process_logs), language="text")
 
     # 처리 결과가 세션에 존재하면 화면에 렌더링 (다운로드 버튼을 눌러도 사라지지 않음)
     if st.session_state.get('extracted_toc') and st.session_state.get('pdf_data'):
