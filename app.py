@@ -85,8 +85,15 @@ class StreamlitLogger:
     def print(self, *args, **kwargs):
         msg = " ".join(map(str, args))
         self.logs.append(msg)
-        # 실행 중에는 일반 코드 블록으로 실시간 출력
-        self.placeholder.code("\n".join(self.logs), language="text")
+        # [수정] 실행 중에도 터미널 느낌(검은 바탕/흰 글씨)의 스크롤 박스로 실시간 출력
+        safe_logs = [line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") for line in self.logs]
+        css = "font-family: monospace; white-space: pre; overflow-x: auto; max-height: 150px; overflow-y: auto; font-size: 14px; background-color: #1e1e1e; color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 10px;"
+        self.placeholder.markdown(f"<div style='{css}'>" + "\n".join(safe_logs) + "</div>", unsafe_allow_html=True)
+        
+    def finalize(self, compare_logs=None):
+        # 처리가 끝나면 HTML 서식(색상 하이라이트)을 적용하여 화면 고정
+        formatted_html = format_final_logs(self.logs, compare_logs)
+        self.placeholder.markdown(formatted_html, unsafe_allow_html=True)
 
 # ==========================================
 # 유사도 검사 라이브러리 지원
@@ -913,9 +920,9 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             new_toc.append([target_level, item['title'], safe_page, dest_dict])
             prev_level = target_level
             
-            st_logger.print(f"{'    ' * (target_level - 1)}└── [{target_level}-depth] {item['title']} ({safe_page}p)")
+            st_logger.print(f"{'    ' * (target_level - 1)}└── {item['title']} ({safe_page}p)")
 
-        st_logger.print(f"└── [1-depth] 끝페이지 ({total_pages}p)")
+        st_logger.print(f"└── 끝페이지 ({total_pages}p)")
         new_toc.append([1, "끝페이지", total_pages, {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, 0)}])
         
         doc.set_toc(new_toc)
@@ -934,7 +941,6 @@ st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
 st.sidebar.header("⚙️ 실행 옵션 설정")
-# [요청사항 적용] 스캔 모드 기본값을 'ALL' (index=2) 로 변경
 SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED", "ALL"], index=2)
 TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
 EXCLUDE_FOOTNOTES = st.sidebar.checkbox("3. 하단 각주(Footnote) 강제 배제", value=False)
