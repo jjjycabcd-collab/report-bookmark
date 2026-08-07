@@ -7,33 +7,65 @@ import tempfile
 import time
 
 # ==========================================
-# [스트림릿 웹 전용 헬퍼 함수] 로그 색상 렌더링
+# [스트림릿 웹 전용 헬퍼 함수] 로그 색상 렌더링 및 영역 분리
 # ==========================================
 def format_final_logs(logs, compare_logs=None):
-    formatted_logs = []
-    compare_set = set(compare_logs) if compare_logs else set()
+    # 개행 문자로 합쳐진 로그들을 한 줄씩 깔끔하게 분리
+    flat_logs = []
+    for item in logs:
+        flat_logs.extend(str(item).split('\n'))
+        
+    flat_compare = set()
+    if compare_logs:
+        for item in compare_logs:
+            flat_compare.update(str(item).split('\n'))
+
+    progress_logs = []
+    tree_logs = []
+    is_tree_part = False
     
-    for line in logs:
-        out_line = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") # HTML 이스케이프
-        
-        is_diff = False
-        if compare_logs is not None:
-            # 책갈피 트리 구성(└──) 부분에서 상대방 로그에 없는 줄이면 '파란색' 처리
-            if "└──" in line and line not in compare_set:
-                is_diff = True
-        
-        # [점검] 키워드는 무조건 '붉은색' 처리
-        if "[점검]" in out_line:
-            out_line = out_line.replace("[점검]", "<span style='color:red; font-weight:bold;'>[점검]</span>")
-        
-        if is_diff:
-            out_line = f"<span style='color:blue; font-weight:bold;'>{out_line}</span>"
+    # 5단계(책갈피 구성)를 기준으로 위/아래 로그를 두 그룹으로 나눔
+    for line in flat_logs:
+        if "5. 요약문 등 유령항목 단일화" in line:
+            is_tree_part = True
             
-        formatted_logs.append(out_line)
-        
-    # [수정] white-space를 pre로 변경하고 overflow-x: auto를 추가하여 가로 스크롤바 생성
-    css = "font-family: monospace; white-space: pre; overflow-x: auto; font-size: 14px; background-color: rgba(128, 128, 128, 0.1); padding: 1rem; border-radius: 0.5rem;"
-    return f"<div style='{css}'>" + "\n".join(formatted_logs) + "</div>"
+        if is_tree_part:
+            tree_logs.append(line)
+        else:
+            progress_logs.append(line)
+
+    # HTML 블록 생성 헬퍼 함수
+    def build_html(log_lines, max_height=None):
+        if not log_lines: return ""
+        formatted = []
+        for line in log_lines:
+            out_line = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") # HTML 이스케이프
+            
+            is_diff = False
+            if flat_compare:
+                if "└──" in line and line not in flat_compare:
+                    is_diff = True
+            
+            # [점검] 키워드는 무조건 '붉은색' 처리
+            if "[점검]" in out_line:
+                out_line = out_line.replace("[점검]", "<span style='color:red; font-weight:bold;'>[점검]</span>")
+            
+            # 차이점은 '파란색' 처리
+            if is_diff:
+                out_line = f"<span style='color:blue; font-weight:bold;'>{out_line}</span>"
+                
+            formatted.append(out_line)
+            
+        height_css = f"max-height: {max_height}; overflow-y: auto;" if max_height else "overflow-y: auto;"
+        css = f"font-family: monospace; white-space: pre; overflow-x: auto; {height_css} font-size: 14px; background-color: rgba(128, 128, 128, 0.1); padding: 1rem; border-radius: 0.5rem; margin-bottom: 10px;"
+        return f"<div style='{css}'>" + "\n".join(formatted) + "</div>"
+
+    # 1~4 단계 로그는 150px로 작게 고정 (스크롤)
+    html_progress = build_html(progress_logs, max_height="150px")
+    # 5 단계 이후(책갈피 트리) 로그는 600px로 넓게 보이도록 처리
+    html_tree = build_html(tree_logs, max_height="600px")
+
+    return html_progress + html_tree
 
 # ==========================================
 # [스트림릿 로깅 클래스]
@@ -49,11 +81,6 @@ class StreamlitLogger:
         self.logs.append(msg)
         # 실행 중에는 일반 코드 블록으로 실시간 출력
         self.placeholder.code("\n".join(self.logs), language="text")
-        
-    def finalize(self, compare_logs=None):
-        # 처리가 끝나면 HTML 서식(색상 하이라이트)을 적용하여 화면 고정
-        formatted_html = format_final_logs(self.logs, compare_logs)
-        self.placeholder.markdown(formatted_html, unsafe_allow_html=True)
 
 # ==========================================
 # 유사도 검사 라이브러리 지원
@@ -384,7 +411,7 @@ def get_sort_key(x):
     return (x['page_idx'], y_val, t_val)
 
 # ==========================================
-# 통합 프로세스 로직
+# 통합 프로세스 로직 
 # ==========================================
 def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes, max_depth, custom_lvl1, custom_lvl2, custom_lvl3, st_logger):
     
@@ -825,7 +852,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         st_logger.print("\n5. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
         filtered_items, seen_ghosts = [], set()
-        
         for item in resolved_items:
             clean_title = CLEAN_PATTERN.sub('', item['title']).lower()
             raw_title = item['title'].replace('[점검] ', '').strip()
@@ -880,7 +906,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             new_toc.append([target_level, item['title'], safe_page, dest_dict])
             prev_level = target_level
             
-            # [수정] 4칸 들여쓰기로 뎁스 구분 명확하게 처리
             st_logger.print(f"{'    ' * (target_level - 1)}└── [{target_level}-depth] {item['title']} ({safe_page}p)")
 
         st_logger.print(f"└── [1-depth] 끝페이지 ({total_pages}p)")
