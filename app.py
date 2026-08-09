@@ -157,17 +157,16 @@ class PageCache:
             page = self.doc[p_idx]
             bboxes = []
             
-            # [수정/추가] 1. PyMuPDF 기본 테이블 탐지하여 배제
+            # 1. PyMuPDF 테이블 탐지 배제
             for t in page.find_tables():
                 bboxes.append(fitz.Rect(t.bbox))
                 
-            # [수정/추가] 2. 사각형(Box) 형태의 벡터 드로잉 영역 배제 (가짜 목차 박스 원천 차단)
+            # 2. 사각형(Box) 형태의 벡터 드로잉 영역 배제 (가짜 목차 박스 원천 차단)
             for d in page.get_drawings():
                 for item in d.get("items", []):
-                    # "re"는 Rectangle, "qu"는 Quad를 의미
-                    if item[0] in ("re", "qu"):
+                    if item[0] in ("re", "qu"):  # Rectangle 또는 Quad
                         rect = fitz.Rect(item[1])
-                        # 유의미한 크기의 박스이면서, 전체 페이지를 덮는 테두리선이 아닐 경우 배제 영역으로 추가
+                        # 유의미한 크기의 박스이면서 전체 페이지를 덮는 테두리가 아닐 경우 배제
                         if 100 < rect.width < page.rect.width * 0.95 and 50 < rect.height < page.rect.height * 0.95:
                             bboxes.append(rect)
                             
@@ -183,21 +182,17 @@ class PageCache:
             
             for b in dict_data.get("blocks", []):
                 if b.get("type") != 0: continue
-                block_spans = []
-                for l in b.get("lines", []):
-                    for s in l.get("spans", []): block_spans.append(s.get("text", ""))
-                full_block_text = fix_broken_characters("".join(block_spans).replace('\n', ' ').strip())
-                
-                clean_block_for_check = full_block_text.replace(" ", "")
-                if any(fs in clean_block_for_check for fs in ["이보고서는", "발표하는때에는", "국가과학기술기밀"]): continue  
-                    
-                is_desc = bool(re.search(r'(습니다|입니다|합니다|됩니다|바랍니다|시오|세요|할 것|한다|된다|이다|있다|없다|같다|기대된다|판단된다|보인다|수 있다|수 있음|진행함|확인함|관찰함|측정함|평가함|도출함|사용함|나타남|수행함|제조함|분석함|계산함|시행하였다)\.?\s*$', full_block_text))
-                if re.search(r'[\.·]{4,}', full_block_text): continue
                 
                 for l in b.get("lines", []):
                     line_rect = fitz.Rect(l["bbox"])
+                    temp_text = "".join([s.get("text", "") for s in l.get("spans", [])]).strip()
+                    clean_line_for_check = temp_text.replace(" ", "")
+                    
+                    # 워터마크 및 불필요 문구 라인 단위 배제 (블록 전체 누락 방지)
+                    if any(fs in clean_line_for_check for fs in ["이보고서는", "발표하는때에는", "국가과학기술기밀", "국가연구개발보고서원문", "동의없이상업적"]): 
+                        continue
+
                     if self.exclude_footnotes and line_rect.y0 > page_height * 0.85:
-                        temp_text = "".join([s.get("text", "") for s in l.get("spans", [])]).strip()
                         if re.match(r'^\s*[1-9]\d*[\)\.]', temp_text): continue
                             
                     line_center = fitz.Point((line_rect.x0 + line_rect.x1) / 2, (line_rect.y0 + line_rect.y1) / 2)
@@ -215,6 +210,12 @@ class PageCache:
                             main_color = s.get("color", 0)
                             
                     text = fix_broken_characters(text.strip())
+                    
+                    # 혹시라도 같은 라인에 병합된 워터마크 강제 삭제
+                    text = re.sub(r'국가연구개발\s*보고서원문.*?사용할\s*수\s*없습니다\.?', '', text).strip()
+                    
+                    is_desc = bool(re.search(r'(습니다|입니다|합니다|됩니다|바랍니다|시오|세요|할 것|한다|된다|이다|있다|없다|같다|기대된다|판단된다|보인다|수 있다|수 있음|진행함|확인함|관찰함|측정함|평가함|도출함|사용함|나타남|수행함|제조함|분석함|계산함|시행하였다)\.?\s*$', text))
+
                     if text and not re.search(r'[\.·]{4,}', text):
                         lines_data.append({'text': text, 'y0': l["bbox"][1], 'max_size': max_size, 'flags': main_flags, 'color': main_color, 'is_desc': is_desc})
             self.valid_lines_cache[p_idx] = lines_data
@@ -265,8 +266,9 @@ def is_ghost_title(clean_t, p_idx=0):
         for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
             if kw in clean_t:
                 if not any(x in clean_t for x in ['첨부', '붙임', '책임자']):
-                    if kw in ['summary', 'contents'] and p_idx > 20:
-                        continue
+                    if kw in ['summary', 'contents']:
+                        if p_idx > 20: return False
+                        if re.search(r'[가-힣]', clean_t): return False
                     return True
                 
     for g in ['별도제출물', '표지', '목차', '참고문헌']:
@@ -289,8 +291,9 @@ def is_restricted_1depth(clean_title, p_idx=0):
         for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
             if kw in clean_title:
                 if not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
-                    if kw in ['summary', 'contents'] and p_idx > 20:
-                        continue
+                    if kw in ['summary', 'contents']:
+                        if p_idx > 20: return False
+                        if re.search(r'[가-힣]', clean_title): return False
                     return True
                 
     for g in ['표지', '별도제출물', '목차', '참고문헌']:
@@ -649,6 +652,8 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                             if not any(x in clean_for_summary for x in ['첨부', '붙임', '책임자']):
                                 if kw in ['summary', 'contents'] and p_idx > 20:
                                     continue
+                                if kw in ['summary', 'contents'] and re.search(r'[가-힣]', clean_for_summary):
+                                    continue
                                 is_summary_forced = True
                                 break
                 
@@ -716,6 +721,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 is_dup = True; break
 
                     if not is_dup:
+                        # 1-depth는 기본적으로 목차(TOC) 제목을 참조하도록 강제
                         if cand_level_toc == 1:
                             is_allowed_1depth = False
                             if is_summary_forced or is_ghost_title(cand_clean, p_idx):
@@ -724,7 +730,8 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 is_allowed_1depth = True
                             else:
                                 for tb in toc_bookmarks:
-                                    if CLEAN_PATTERN.sub('', tb['title']) == cand_clean:
+                                    tb_clean = CLEAN_PATTERN.sub('', tb['title'])
+                                    if tb_clean and cand_clean.startswith(tb_clean):
                                         is_allowed_1depth = True
                                         break
                                         
@@ -956,8 +963,9 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 if len(clean_title) <= 25:
                     for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
                         if kw in clean_title and not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
-                            if kw in ['summary', 'contents'] and item['page_idx'] > 20:
-                                continue
+                            if kw in ['summary', 'contents']:
+                                if item['page_idx'] > 20: continue
+                                if re.search(r'[가-힣]', clean_title): continue
                             matched_kw = kw
                             break
                         
@@ -1000,11 +1008,13 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             item['title'] = item['title'].replace('<', '').replace('>', '').strip()
             
             target_level = item['level']
-            if target_level == 1: current_1depth_title = CLEAN_PATTERN.sub('', item['title']).lower()
             
-            if item['title'] == '참고문헌':
+            # [수정] 참고문헌이 '기타' 아래에 있을 때 2-depth로 동적 변경 로직
+            clean_item_title = CLEAN_PATTERN.sub('', item['title']).lower()
+            if '참고문헌' in clean_item_title and len(clean_item_title) <= 15:
                 target_level = 2 if '기타' in current_1depth_title else 1 
-                if target_level == 1: current_1depth_title = '참고문헌'
+                
+            if target_level == 1: current_1depth_title = CLEAN_PATTERN.sub('', item['title']).lower()
             
             if target_level > MAX_DEPTH: continue
             if target_level > 1 and any(x in current_1depth_title for x in ['표지', '제출문', '요약서', '요약문', '목차', '참고문헌', '붙임', '별첨', '부록']): continue
