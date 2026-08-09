@@ -108,7 +108,6 @@ TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MUL
 
 KOR_IDX = "가나다라마바사아자차카타파하"
 
-# [수정] ( 1 ), ( a ), ( b ) 등 괄호 안의 공백 패턴 및 알파벳 괄호 기호 인식 추가
 CANDIDATE_PATTERN = re.compile(
     rf'^\s*('
     rf'제\s*\d+\s*[장절][\.\:]?\s*|'
@@ -159,15 +158,25 @@ class PageCache:
             page = self.doc[p_idx]
             bboxes = []
             
+            # 1. 일반 테이블 탐지 배제
             for t in page.find_tables():
-                bboxes.append(fitz.Rect(t.bbox))
+                try:
+                    bboxes.append(fitz.Rect(t.bbox))
+                except Exception:
+                    pass
                 
+            # 2. 벡터 드로잉(Box) 탐지 배제 -> 박스 안 가짜 목차 원천 차단
             for d in page.get_drawings():
                 for item in d.get("items", []):
                     if item[0] in ("re", "qu"):  
-                        rect = fitz.Rect(item[1])
-                        if 80 < rect.width < page.rect.width * 0.95 and 30 < rect.height < page.rect.height * 0.95:
-                            bboxes.append(rect)
+                        # [섬세한 수정] 비정상적인 벡터 객체 변환 에러(assert len(ret) == 4) 방어망 추가
+                        try:
+                            rect = fitz.Rect(item[1])
+                            # 유의미한 크기의 사각형이면서 전체 페이지 테두리가 아닌 경우 배제
+                            if 80 < rect.width < page.rect.width * 0.95 and 30 < rect.height < page.rect.height * 0.95:
+                                bboxes.append(rect)
+                        except Exception:
+                            continue
                             
             self.exclude_bboxes_cache[p_idx] = bboxes
         return self.exclude_bboxes_cache[p_idx]
@@ -388,7 +397,6 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         if is_3depth_in_jang(t): return 3
         return 99 
         
-    # [수정/추가] 괄호 안에 공백이 있는 경우 ( 1 ), ( a ) 등 포괄하여 3-depth 판별 적용
     if re.match(r'^\(\s*[1-9]\d*\s*\)\s*', t) or re.match(rf'^\(\s*[{KOR_IDX}]\s*\)\s*', t) or re.match(r'^\(\s*[A-Za-z]\s*\)\s*', t): return 3
     
     if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+-\d+[\.\)]?', t): return 3
@@ -408,7 +416,6 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         
     return 2
 
-# [수정] 모든 번호 추출 상한선(30) 추가 (연도/논문인용 등의 가비지 방지)
 def get_seq_info(title):
     t = title.strip()
     m = re.match(r'^([1-9]\d*(?:\.\d+)+)\.(\d+)[\.\)]?\s*', t)
