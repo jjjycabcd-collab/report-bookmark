@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF 연구보고서 책갈피 자동 생성기 분석서</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Helvetica Neue', 'Segoe UI', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
+            background-color: #f8fafc;
+        }
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .code-block {
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-family: monospace;
+            font-size: 0.875rem;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased">
+
+    <div class="max-w-5xl mx-auto px-4 py-12">
+        <!-- Header -->
+        <header class="mb-10 border-b border-slate-200 pb-8 text-center">
+            <div class="inline-block bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-semibold mb-4">
+                소스코드 분석 리포트
+            </div>
+            <h1 class="text-4xl font-extrabold text-slate-900 tracking-tight mb-4">
+                📑 PDF 연구보고서 책갈피 자동 생성기
+            </h1>
+            <p class="text-lg text-slate-600 max-w-2xl mx-auto">
+                Python과 Streamlit으로 작성된 본 프로그램은 PDF 문서의 텍스트, 폰트 사이즈, 좌표를 분석하여 계층화된 목차(Bookmark)를 자동으로 생성하는 강력한 도구입니다.
+            </p>
+        </header>
+
+        <!-- Tabs Navigation -->
+        <nav class="flex space-x-1 border-b border-slate-300 mb-8" aria-label="Tabs">
+            <button onclick="switchTab(event, 'overview')" class="tab-btn w-1/4 py-4 px-1 text-center border-b-2 font-medium text-sm transition-colors duration-200 border-blue-600 text-blue-600" id="defaultOpen">
+                💡 개요
+            </button>
+            <button onclick="switchTab(event, 'procedure')" class="tab-btn w-1/4 py-4 px-1 text-center border-b-2 border-transparent font-medium text-sm text-slate-500 hover:text-slate-700 hover:border-slate-300 transition-colors duration-200">
+                ⚙️ 동작 절차
+            </button>
+            <button onclick="switchTab(event, 'features')" class="tab-btn w-1/4 py-4 px-1 text-center border-b-2 border-transparent font-medium text-sm text-slate-500 hover:text-slate-700 hover:border-slate-300 transition-colors duration-200">
+                ✨ 핵심 특징
+            </button>
+            <button onclick="switchTab(event, 'results')" class="tab-btn w-1/4 py-4 px-1 text-center border-b-2 border-transparent font-medium text-sm text-slate-500 hover:text-slate-700 hover:border-slate-300 transition-colors duration-200">
+                🎯 결과물
+            </button>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 min-h-[400px]">
+            
+            <!-- 1. 개요 (Overview) -->
+            <section id="overview" class="tab-content active">
+                <h2 class="text-2xl font-bold mb-6 text-slate-900 border-l-4 border-blue-500 pl-4">프로그램 개요</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                    <div>
+                        <h3 class="text-lg font-semibold mb-3 text-blue-700">목적 및 용도</h3>
+                        <p class="text-slate-600 leading-relaxed">
+                            방대한 분량의 연구보고서나 공공문서 PDF 파일에 네비게이션용 <strong>책갈피(Bookmark/TOC)</strong>를 자동으로 삽입하는 웹 애플리케이션입니다. 사용자가 일일이 수동으로 목차를 만들 필요 없이, 문서 내부의 텍스트와 구조를 인공지능적으로 스캔하여 계층 구조(1-depth ~ 최대 5-depth)를 알아서 구성해 줍니다.
+                        </p>
+                    </div>
+                    <div class="bg-slate-50 p-5 rounded-xl border border-slate-100">
+                        <h3 class="text-lg font-semibold mb-3 text-blue-700">기술 스택 (Tech Stack)</h3>
+                        <ul class="space-y-2">
+                            <li class="flex items-center"><span class="w-2 h-2 bg-blue-500 rounded-full mr-2"></span><strong>UI 프레임워크:</strong> Streamlit</li>
+                            <li class="flex items-center"><span class="w-2 h-2 bg-blue-500 rounded-full mr-2"></span><strong>PDF 처리:</strong> PyMuPDF (fitz)</li>
+                            <li class="flex items-center"><span class="w-2 h-2 bg-blue-500 rounded-full mr-2"></span><strong>패턴 인식:</strong> Python 정규표현식 (re)</li>
+                            <li class="flex items-center"><span class="w-2 h-2 bg-blue-500 rounded-full mr-2"></span><strong>유사도 검사:</strong> RapidFuzz / Difflib</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <h3 class="text-lg font-semibold mb-3 text-slate-800">지원하는 스캔 모드</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="p-4 border border-slate-200 rounded-lg shadow-sm">
+                        <h4 class="font-bold text-blue-600 mb-1">FULL_SCAN</h4>
+                        <p class="text-sm text-slate-600">문서 전체의 폰트 사이즈와 정규식을 분석하여 목차를 추출합니다.</p>
+                    </div>
+                    <div class="p-4 border border-slate-200 rounded-lg shadow-sm">
+                        <h4 class="font-bold text-teal-600 mb-1">TOC_BASED</h4>
+                        <p class="text-sm text-slate-600">문서 앞단의 '목차' 페이지를 우선 분석한 후 본문과 매칭합니다.</p>
+                    </div>
+                    <div class="p-4 border border-slate-200 rounded-lg shadow-sm">
+                        <h4 class="font-bold text-purple-600 mb-1">ALL</h4>
+                        <p class="text-sm text-slate-600">두 가지 모드를 동시에 실행하여 결과를 비교할 수 있게 합니다.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 2. 절차 (Procedure) -->
+            <section id="procedure" class="tab-content">
+                <h2 class="text-2xl font-bold mb-6 text-slate-900 border-l-4 border-emerald-500 pl-4">동작 절차 (알고리즘 흐름)</h2>
+                <p class="text-slate-600 mb-8">프로그램 내부에 구현된 5단계의 파이프라인 분석 과정입니다.</p>
+
+                <div class="relative border-l-2 border-emerald-200 ml-4 space-y-8">
+                    <div class="relative pl-8">
+                        <div class="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-emerald-500 ring-4 ring-white"></div>
+                        <h3 class="font-bold text-lg text-slate-800">Step 1. 국문 목차 페이지 전용 탐색</h3>
+                        <p class="text-slate-600 mt-2">문서 앞부분(최대 30페이지)을 스캔하여 '목차', '차례' 등의 키워드를 찾아 목차 영역을 식별하고, 해당 페이지의 텍스트를 추출해 1차 후보군을 형성합니다.</p>
+                    </div>
+                    <div class="relative pl-8">
+                        <div class="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-emerald-500 ring-4 ring-white"></div>
+                        <h3 class="font-bold text-lg text-slate-800">Step 2. 본문 좌표 추적 및 유효성 통제</h3>
+                        <p class="text-slate-600 mt-2">Step 1에서 찾은 목차 항목들이 실제 본문(Body)의 어느 페이지, 어느 Y좌표에 위치하는지 <code class="text-pink-600 bg-pink-50 px-1 rounded">find_anchor_in_page</code> 함수로 매칭합니다.</p>
+                    </div>
+                    <div class="relative pl-8">
+                        <div class="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-emerald-500 ring-4 ring-white"></div>
+                        <h3 class="font-bold text-lg text-slate-800">Step 3. 본문 전체 스캔 (FULL_SCAN) 및 프로파일링</h3>
+                        <p class="text-slate-600 mt-2">본문의 모든 텍스트 블록을 스캔하며 글자 크기(f_size), 폰트 속성(flags), 색상(color)을 프로파일링합니다. 각주, 표 안의 텍스트, 쓸모없는 문장(가비지 데이터)은 철저히 배제합니다.</p>
+                    </div>
+                    <div class="relative pl-8">
+                        <div class="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-emerald-500 ring-4 ring-white"></div>
+                        <h3 class="font-bold text-lg text-slate-800">Step 4. 시퀀스/페이지 역전 검증 (안전장치)</h3>
+                        <p class="text-slate-600 mt-2">목차의 번호 순서(예: 1장 -> 2장)나 페이지 번호가 거꾸로 가는 현상(역전 현상)을 방지합니다. 폰트 프로필이 갑자기 달라지면 오탐으로 간주하여 필터링합니다.</p>
+                    </div>
+                    <div class="relative pl-8">
+                        <div class="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-emerald-500 ring-4 ring-white"></div>
+                        <h3 class="font-bold text-lg text-slate-800">Step 5. 유령항목 단일화 및 최종 트리 구성</h3>
+                        <p class="text-slate-600 mt-2">목차 본문에는 없지만 필수적인 '표지', '제출문', '요약서', '참고문헌' 등을 최상위(1-depth)에 고정 배치하고, <code class="text-pink-600 bg-pink-50 px-1 rounded">doc.set_toc()</code>를 통해 PDF에 책갈피를 물리적으로 삽입합니다.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3. 특징 (Features) -->
+            <section id="features" class="tab-content">
+                <h2 class="text-2xl font-bold mb-6 text-slate-900 border-l-4 border-amber-500 pl-4">핵심 특징 (Key Features)</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-amber-50 rounded-xl p-6">
+                        <div class="text-3xl mb-3">🇰🇷</div>
+                        <h3 class="font-bold text-lg text-amber-900 mb-2">한국어 연구보고서 특화 패턴 인식</h3>
+                        <p class="text-amber-800 text-sm leading-relaxed">
+                            <code class="bg-white px-1 rounded">제 1 장</code>, <code class="bg-white px-1 rounded">1.1.1</code>, <code class="bg-white px-1 rounded">가.</code>, <code class="bg-white px-1 rounded">(1)</code> 등 한국어 공공/연구 문서에서 널리 쓰이는 복잡한 목차 넘버링 체계를 무려 14가지 이상의 정규표현식(Regex)으로 완벽하게 파싱합니다.
+                        </p>
+                    </div>
+                    
+                    <div class="bg-indigo-50 rounded-xl p-6">
+                        <div class="text-3xl mb-3">👻</div>
+                        <h3 class="font-bold text-lg text-indigo-900 mb-2">유령 항목(Ghost Items) 스마트 처리</h3>
+                        <p class="text-indigo-800 text-sm leading-relaxed">
+                            실제 문서의 '목차' 페이지에 등재되어 있지 않지만, 사용자가 반드시 필요로 하는 '표지', '요약문', '영문요약서(Summary)', '참고문헌' 등을 스스로 찾아내어 1-depth 항목으로 자동 추가합니다.
+                        </p>
+                    </div>
+
+                    <div class="bg-rose-50 rounded-xl p-6">
+                        <div class="text-3xl mb-3">🛡️</div>
+                        <h3 class="font-bold text-lg text-rose-900 mb-2">가비지 데이터 및 노이즈 필터링</h3>
+                        <p class="text-rose-800 text-sm leading-relaxed">
+                            단순 본문 문장("~하였습니다.", "~할 수 있다"), 각주, 표(Table) 내부의 숫자, 그림 캡션(Fig 1.) 등을 목차로 오인하지 않도록 위치 기하학(BBox)과 형태소 어미 정규식을 통해 철저히 배제합니다.
+                        </p>
+                    </div>
+
+                    <div class="bg-cyan-50 rounded-xl p-6">
+                        <div class="text-3xl mb-3">🎛️</div>
+                        <h3 class="font-bold text-lg text-cyan-900 mb-2">사용자 정의(Custom) 정규식 지원</h3>
+                        <p class="text-cyan-800 text-sm leading-relaxed">
+                            문서마다 고유한 기호를 사용할 경우를 대비하여 Streamlit 사이드바를 통해 사용자가 1~3 Depth의 패턴(예: 1-1, [A] 등)을 직접 입력하여 강제 지정할 수 있는 유연성을 제공합니다.
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 4. 결과물 (Results) -->
+            <section id="results" class="tab-content">
+                <h2 class="text-2xl font-bold mb-6 text-slate-900 border-l-4 border-purple-500 pl-4">제공되는 결과물</h2>
+                
+                <div class="flex flex-col md:flex-row gap-8">
+                    <div class="flex-1 space-y-6">
+                        <div class="p-5 border border-slate-200 rounded-lg shadow-sm flex items-start">
+                            <div class="text-4xl mr-4 mt-1">📥</div>
+                            <div>
+                                <h3 class="font-bold text-slate-800 text-lg">완성된 PDF 파일 다운로드</h3>
+                                <p class="text-slate-600 mt-1 text-sm">기존 PDF 문서의 원본은 훼손하지 않고, 좌측 네비게이션 패널에 계층형 책갈피(TOC) 정보가 완벽하게 내장된 새로운 <code class="bg-slate-100 px-1 rounded">_bookmarked.pdf</code> 파일을 제공합니다.</p>
+                            </div>
+                        </div>
+                        
+                        <div class="p-5 border border-slate-200 rounded-lg shadow-sm flex items-start">
+                            <div class="text-4xl mr-4 mt-1">🖥️</div>
+                            <div>
+                                <h3 class="font-bold text-slate-800 text-lg">실시간 추출 로그 (Terminal UI)</h3>
+                                <p class="text-slate-600 mt-1 text-sm">스트림릿 화면상에 개발자 친화적인 터미널 형태의 로그를 제공합니다. 추출 과정의 진척도, 에러 요소([점검]), 생성된 목차의 계층 트리를 시각적으로 렌더링합니다.</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="flex-1">
+                        <h3 class="font-semibold text-slate-700 mb-3">로그 출력 예시 (UI 시뮬레이션)</h3>
+                        <div class="code-block h-[250px]">
+> 1. 국문 목차 페이지 전용 탐색 중...
+  -> 3p에서 국문 목차를 성공적으로 찾았습니다.
+> 2. 본문 좌표 추적 및 상하 범주 유효성 통제 중...
+> 3. 본문 스캔(FULL_SCAN) 및 프로파일링 중...
+> 4. 시퀀스/페이지 역전 검증 중...
+> 5. 유령항목 단일화 및 최종 책갈피 트리 구성 중...
+
+표지 (0p)
+목차 (3p)
+요약문 (5p)
+제 1 장 서론 (12p)
+    1. 연구의 필요성 (12p)
+    2. 연구 목표 (15p)
+제 2 장 본론 (20p)
+<span class="text-red-400 font-bold">[점검]</span> 1. 잘못 추출된 오타 항목 (25p)
+참고문헌 (120p)
+끝페이지 (125p)
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+        
+        <footer class="mt-8 text-center text-sm text-slate-500">
+            Powered by Streamlit & PyMuPDF (fitz) Analysis
+        </footer>
+    </div>
+
+    <!-- Tab Switching Logic -->
+    <script>
+        function switchTab(evt, tabName) {
+            // 모든 탭 내용 숨기기
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tab-content");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+                tabcontent[i].classList.remove("active");
+            }
+
+            // 모든 탭 버튼 비활성화 스타일 적용
+            tablinks = document.getElementsByClassName("tab-btn");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].classList.remove("border-blue-600", "text-blue-600");
+                tablinks[i].classList.add("border-transparent", "text-slate-500");
+            }
+
+            // 선택된 탭 내용 표시 및 버튼 활성화
+            const activeTab = document.getElementById(tabName);
+            activeTab.style.display = "block";
+            // 애니메이션을 위해 아주 짧은 지연 후 active 클래스 추가
+            setTimeout(() => {
+                activeTab.classList.add("active");
+            }, 10);
+            
+            evt.currentTarget.classList.remove("border-transparent", "text-slate-500");
+            evt.currentTarget.classList.add("border-blue-600", "text-blue-600");
+        }
+
+        // 페이지 로드 시 기본 탭 열기
+        document.getElementById("defaultOpen").click();
+    </script>
+</body>
+</html>
