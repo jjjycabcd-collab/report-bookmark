@@ -340,7 +340,6 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
             
     return None, 0.0, 0, 0
 
-# [수정] 1, 2-depth 구조를 완전히 고정시키고, 3-depth를 독립적으로 식별하는 로직 적용
 def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_scan=False, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None):
     t = title.strip()
     clean_t = CLEAN_PATTERN.sub('', t)
@@ -358,11 +357,9 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         if is_3depth_in_jang(t): return 3
         return 99 
         
-    # 명시적 3-depth 기호: 1.1.1, 1-1-1, (1), (가), a)
     if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+-\d+[\.\)]?', t): return 3
     if re.match(r'^\([1-9]\d*\)(?:\s+|$)', t) or re.match(rf'^\([{KOR_IDX}]\)(?:\s+|$)', t) or re.match(r'^[a-z]\)(?:\s+|$)', t): return 3
 
-    # 명시적 2-depth 기호: 제1절, 1.1, 1-1, A., 1), 가.
     if re.match(r'^제\s*\d+\s*절', t): return 2
     if re.match(r'^[1-9]\d*\.\d+[\.\s]?', t): return 2 
     if re.match(r'^[1-9]\d*-\d+[\.\)]?', t): return 2 
@@ -370,14 +367,13 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
     if re.match(r'^[1-9]\d*[\)）](?:\s+|$)', t): return 2
     if re.match(rf'^[{KOR_IDX}][\.\)）]\s*', t): return 2 
     
-    # 명시적 1-depth 기호: 1. 
     if re.match(r'^[1-9]\d*\.(?:\s+|$)', t) or re.match(r'^[1-9]\d*\s+[가-힣a-zA-Z]', t):
         if font_size > 0.0 and font_trackers is not None:
             if font_trackers.get('depth1', 0.0) == 0.0: font_trackers['depth1'] = font_size
             elif font_size <= font_trackers['depth1'] - 0.8: return 2
         return 1
         
-    return 2 # fallback
+    return 2
 
 def get_seq_info(title):
     t = title.strip()
@@ -486,11 +482,13 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 toc_end_idx = i 
             else: break
 
+        # [수정] 파편화된 목차 구조(줄바꿈) 병합 처리
         toc_text = re.sub(r'([1-9]\d*-)\s*\n\s*([1-9]\d*)', r'\1\2', toc_text)
-        toc_text = re.sub(r'([1-9]\d*\.)\s*\n\s*([가-힣a-zA-Z])', r'\1 \2', toc_text)
+        toc_text = re.sub(r'([1-9]\d*[\.\)]|[{KOR_IDX}][\.\)])\s*\n\s*([가-힣a-zA-Z<\[])', r'\1 \2', toc_text)
         toc_text = re.sub(r'(제\s*\d+)\s*\n+\s*(장|절)', r'\1\2', toc_text)
-        toc_text = re.sub(r'(제\s*\d+\s*[장절])\s*\n+\s*([가-힣a-zA-Z])', r'\1 \2', toc_text)
-        toc_text = re.sub(r'([가-힣a-zA-Z\)])\s*\n+\s*(\d+)(?=\s*(\n|$))', r'\1 \2', toc_text)
+        toc_text = re.sub(r'(제\s*\d+\s*[장절])\s*\n+\s*([가-힣a-zA-Z<\[])', r'\1 \2', toc_text)
+        toc_text = re.sub(r'([가-힣a-zA-Z\,])\s*\n\s*(?!(?:제\s*출\s*문|보\s*고\s*서|요\s*약|목\s*차|표\s*지|참\s*고\s*문\s*헌|Summary|Contents))([가-힣a-zA-Z\(\<\[])', r'\1 \2', toc_text, flags=re.IGNORECASE)
+        toc_text = re.sub(r'([가-힣a-zA-Z\>\]\)])\s*\n+\s*(?:\||[\.·_-]{2,})?\s*(\d+)(?=\s*(\n|$))', r'\1 | \2', toc_text)
 
         raw_items, parsed_titles = [], set()
         for match in TOC_PATTERN.finditer(toc_text):
@@ -534,7 +532,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 title_body = PREFIX_STRIP_PATTERN.sub('', title).strip()
                 if not re.search(r'[가-힣]', title_body) and not re.match(r'^<?\[?(붙임|별첨|부록)', title): continue
             
-            # [수정] 3-depth가 TOC에서 버려지지 않도록 MAX_DEPTH 변수 의존성 완벽 제거
             if has_jang:
                 is_jang = bool(re.match(r'^제\d+장', re.sub(r'\s+', '', title)))
                 is_jeol = bool(re.match(r'^제\d+절', re.sub(r'\s+', '', title)))
@@ -566,7 +563,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             clean_t = CLEAN_PATTERN.sub('', title)
             if clean_t in created_titles: continue
 
-            # [수정] max_depth 파라미터 완전 삭제
             level = determine_level(title, has_jang, font_size=0, is_body_scan=False, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
             expected_page = printed_page + offset if printed_page > 0 else seq_page
             target_page_idx = min(max(expected_page, toc_end_idx + 1), total_pages - 1)
@@ -608,7 +604,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 if level == 1: last_1depth_coord = (found_page, 0.0)
                 elif level == 2: last_2depth_coord = (found_page, 0.0)
             
-            # [수정] max_depth 파라미터 완전 삭제
             final_level = determine_level(title, has_jang, font_size=found_f_size, is_body_scan=False, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3) if found else level
             resolved_items.append({
                 'toc_idx': toc_idx, 'title': title if found else f"[점검] {title}", 
@@ -654,7 +649,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                             
                     if any(fs in text for fs in ["이 보고서는", "발표하는 때에는", "국가과학기술기밀"]): continue
                     
-                    # [수정] max_depth 파라미터 완전 삭제
                     cand_prefix, cand_clean, is_dup = extract_prefix(text, rx_lvl1, rx_lvl2, rx_lvl3), CLEAN_PATTERN.sub('', text), False
                     cand_level_toc = determine_level(text, has_jang, font_size=max_size, font_trackers=global_font_trackers, is_body_scan=True, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
                     if cand_level_toc == 99: continue
@@ -726,7 +720,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         for item in resolved_items:
             lvl = item['level']
-            # [수정] 3-depth 후보는 1, 2-depth 검증(Step 4-A)에 일절 관여하지 않음 (완벽한 구조 고정)
             if lvl not in [1, 2, 99]: continue 
             
             title = item['title']
@@ -815,9 +808,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 
                 strict_items_1_2.append(item)
 
-        # ----------------------------------------------------
-        # [Step 4-B] 3-depth 독립 시퀀스 유효성 검증 (1, 2-depth 완전 보존)
-        # ----------------------------------------------------
         strict_items_3 = []
         if MAX_DEPTH >= 3:
             st_logger.print("\n4-B. [독립 스캔] 3-depth 시퀀스 유효성 검증 중 (1, 2-depth 보존)...")
@@ -929,7 +919,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 target_level = 2 if '기타' in current_1depth_title else 1 
                 if target_level == 1: current_1depth_title = '참고문헌'
             
-            # [수정] 최종 병합 전 화면 출력 뎁스 필터링만 MAX_DEPTH로 통제
             if target_level > MAX_DEPTH: continue
             if target_level > 1 and any(x in current_1depth_title for x in ['표지', '제출문', '요약서', '요약문', '목차', '참고문헌', '붙임', '별첨', '부록']): continue
             if target_level > prev_level + 1: target_level = prev_level + 1
