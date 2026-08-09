@@ -10,6 +10,7 @@ import time
 # [스트림릿 웹 전용 헬퍼 함수] 로그 색상 렌더링 및 영역 분리
 # ==========================================
 def format_final_logs(logs, compare_logs=None):
+    # 개행 문자로 합쳐진 로그들을 한 줄씩 깔끔하게 분리
     flat_logs = []
     for item in logs:
         flat_logs.extend(str(item).split('\n'))
@@ -23,6 +24,7 @@ def format_final_logs(logs, compare_logs=None):
     tree_logs = []
     is_tree_part = False
     
+    # 5단계(책갈피 구성)를 기준으로 위/아래 로그를 두 그룹으로 나눔
     for line in flat_logs:
         if "5. 요약문 등 유령항목 단일화" in line:
             is_tree_part = True
@@ -32,20 +34,23 @@ def format_final_logs(logs, compare_logs=None):
         else:
             progress_logs.append(line)
 
+    # HTML 블록 생성 헬퍼 함수
     def build_html(log_lines, max_height=None, is_terminal=False, is_tree=False):
         if not log_lines: return ""
         formatted = []
         for line in log_lines:
-            out_line = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") 
+            out_line = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") # HTML 이스케이프
             
             is_diff = False
             if flat_compare and is_tree:
                 if line not in flat_compare:
                     is_diff = True
             
+            # [점검] 키워드는 무조건 '붉은색' 처리
             if "[점검]" in out_line:
                 out_line = out_line.replace("[점검]", "<span style='color:red; font-weight:bold;'>[점검]</span>")
             
+            # 차이점은 '파란색' 처리
             if is_diff:
                 out_line = f"<span style='color:blue; font-weight:bold;'>{out_line}</span>"
                 
@@ -53,6 +58,7 @@ def format_final_logs(logs, compare_logs=None):
             
         height_css = f"max-height: {max_height}; overflow-y: auto;" if max_height else "overflow-y: auto;"
         
+        # 터미널 모드일 경우 검은 바탕에 흰 글씨 적용
         if is_terminal:
             css = f"font-family: monospace; white-space: pre; overflow-x: auto; {height_css} font-size: 14px; background-color: #1e1e1e; color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 10px;"
         else:
@@ -60,7 +66,9 @@ def format_final_logs(logs, compare_logs=None):
             
         return f"<div style='{css}'>" + "\n".join(formatted) + "</div>"
 
+    # 1~4 단계 로그는 150px로 작게 고정 (스크롤), 터미널 테마 적용
     html_progress = build_html(progress_logs, max_height="150px", is_terminal=True, is_tree=False)
+    # 5 단계 이후(책갈피 트리) 로그는 600px로 넓게 보이도록 처리 (기존 유지)
     html_tree = build_html(tree_logs, max_height="600px", is_terminal=False, is_tree=True)
 
     return html_progress + html_tree
@@ -77,11 +85,13 @@ class StreamlitLogger:
     def print(self, *args, **kwargs):
         msg = " ".join(map(str, args))
         self.logs.append(msg)
+        # 실행 중에도 터미널 느낌(검은 바탕/흰 글씨)의 스크롤 박스로 실시간 출력
         safe_logs = [line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") for line in self.logs]
         css = "font-family: monospace; white-space: pre; overflow-x: auto; max-height: 150px; overflow-y: auto; font-size: 14px; background-color: #1e1e1e; color: #ffffff; padding: 1rem; border-radius: 0.5rem; margin-bottom: 10px;"
         self.placeholder.markdown(f"<div style='{css}'>" + "\n".join(safe_logs) + "</div>", unsafe_allow_html=True)
         
     def finalize(self, compare_logs=None):
+        # 처리가 끝나면 HTML 서식(색상 하이라이트)을 적용하여 화면 고정
         formatted_html = format_final_logs(self.logs, compare_logs)
         self.placeholder.markdown(formatted_html, unsafe_allow_html=True)
 
@@ -245,17 +255,10 @@ def is_ghost_title(clean_t):
     clean_t = clean_t.lower()
     if '영문목차' in clean_t: return True
     if '영문요약서' in clean_t: return True
-    
-    # --- 지정 키워드 강제 인식 로직 (길이 25 제한하여 가비지 문장 방지) ---
-    if len(clean_t) <= 25:
-        for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
-            if kw in clean_t:
-                if not any(x in clean_t for x in ['첨부', '붙임', '책임자']):
-                    return True
-                
-    for g in ['별도제출물', '표지', '목차', '참고문헌']:
+    for g in ['제출문', '별도제출물', '요약서', '요약문', '표지', '목차', '참고문헌']:
         if g in clean_t and len(clean_t) <= len(g) + 8: return True
-    for g in ['content']:
+        if g == '요약문' and '요약문' in clean_t: return True
+    for g in ['summary', 'contents', 'content']:
         if g in clean_t and len(clean_t) <= len(g) + 5 and not re.search(r'[가-힣]', clean_t): return True
     return False
 
@@ -264,17 +267,10 @@ def is_restricted_1depth(clean_title):
     clean_title = clean_title.lower()
     if '영문목차' in clean_title: return True
     if '영문요약서' in clean_title: return True
-    
-    # --- 지정 키워드 강제 인식 로직 (길이 25 제한하여 가비지 문장 방지) ---
-    if len(clean_title) <= 25:
-        for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
-            if kw in clean_title:
-                if not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
-                    return True
-                
-    for g in ['표지', '별도제출물', '목차', '참고문헌']:
+    for g in ['표지', '제출문', '별도제출물', '요약서', '요약문', '목차', '참고문헌']:
         if g in clean_title and len(clean_title) <= len(g) + 12: return True
-    for g in ['content']:
+        if g == '요약문' and '요약문' in clean_title: return True
+    for g in ['summary', 'contents', 'content']:
         if g in clean_title and len(clean_title) <= len(g) + 5 and not re.search(r'[가-힣]', clean_title): return True
     if re.match(r'^\d*(붙임|별첨|부록)', clean_title): return True
     return False
@@ -361,6 +357,7 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         if is_3depth_in_jang(t): return 3
         return 99 
         
+    # [수정] a)와 같은 소문자 알파벳 기호를 3-depth로 묶는 정규식 삭제 (2-depth로 인식 유도)
     if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+-\d+[\.\)]?', t): return 3
     if re.match(r'^\([1-9]\d*\)\s*', t) or re.match(rf'^\([{KOR_IDX}]\)\s*', t): return 3
 
@@ -406,6 +403,22 @@ def get_seq_info(title):
     m = re.match(r'^([A-Za-z])[\.\)]\s*', t)
     if m: return ('alpha_dot', ord(m.group(1).upper()) - 64)
     return (None, None)
+
+def make_prefix(seq_type, num):
+    if not num: return None
+    if seq_type.startswith('num_dot_sub_'): return f"{seq_type[12:].replace('_', '.')}.{num}"
+    if seq_type.startswith('num_dot_'): return f"{seq_type[8:]}.{num}"
+    if seq_type.startswith('num_dash_sub_'): return f"{seq_type[13:].replace('_', '-')}-{num}"
+    if seq_type == 'alpha_dot': return f"{chr(num + 64)}." 
+    if num > len(KOR_CHARS): return None
+    if seq_type == 'num_jeol': return f"제{num}절"
+    if seq_type == 'num_paren_both': return f"({num})"
+    if seq_type == 'num_paren_right': return f"{num})"
+    if seq_type == 'kor_dot': return f"{KOR_CHARS[num-1]}."
+    if seq_type == 'kor_paren_right': return f"{KOR_CHARS[num-1]})"
+    if seq_type == 'kor_paren_both': return f"({KOR_CHARS[num-1]})"
+    if seq_type == 'num_dot': return f"{num}."
+    return None
 
 def get_parent_1depth(p_idx, y0, items):
     for item in reversed(items):
@@ -615,16 +628,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 text_nospace = text.replace(" ", "")
                 is_special_kws_match = all(k in text_nospace for k in ["붙임", "연구책임자", "대표", "연구실적"])
                 
-                # --- 강제 추출 (요약문, 제출문, 요약서, summary, contents) ---
-                clean_for_summary = CLEAN_PATTERN.sub('', text).lower()
-                is_summary_forced = False
-                if len(clean_for_summary) <= 25:
-                    for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
-                        if kw in clean_for_summary:
-                            if not any(x in clean_for_summary for x in ['첨부', '붙임', '책임자']):
-                                is_summary_forced = True
-                                break
-                
                 if is_special_kws_match:
                     mapped = False
                     for item in resolved_items:
@@ -639,7 +642,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'level': 1, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
                     continue 
 
-                if is_summary_forced or CANDIDATE_PATTERN.match(text) or (rx_lvl1 and rx_lvl1.match(text)) or (rx_lvl2 and rx_lvl2.match(text)) or (rx_lvl3 and rx_lvl3.match(text)):
+                if CANDIDATE_PATTERN.match(text) or (rx_lvl1 and rx_lvl1.match(text)) or (rx_lvl2 and rx_lvl2.match(text)) or (rx_lvl3 and rx_lvl3.match(text)):
                     if not re.search(r'[가-힣a-zA-Z]', text): continue
                     
                     prefix_str = extract_prefix(text, rx_lvl1, rx_lvl2, rx_lvl3)
@@ -651,7 +654,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     
                     cand_prefix, cand_clean, is_dup = extract_prefix(text, rx_lvl1, rx_lvl2, rx_lvl3), CLEAN_PATTERN.sub('', text), False
                     cand_level_toc = determine_level(text, has_jang, font_size=max_size, font_trackers=global_font_trackers, is_body_scan=True, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
-                    
                     if cand_level_toc == 99: continue
                     
                     cand_1depth_parent = get_parent_1depth(p_idx, y0, resolved_items)
@@ -685,19 +687,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 is_dup = True; break
 
                     if not is_dup:
-                        # [핵심 수정] 1-depth는 기본적으로 목차(TOC)에서 넘어온 항목만 인정 (가비지 방지)
-                        if cand_level_toc == 1:
-                            is_allowed_1depth = False
-                            # 요약문, 제출문 등 지정 유령항목은 예외 허용
-                            if is_summary_forced or is_ghost_title(cand_clean):
-                                is_allowed_1depth = True
-                            # 명확한 구조적 제목(제n장, 붙임, 별첨, 부록 등)도 예외 허용
-                            elif re.match(r'^(제\d+장|붙임|별첨|부록)', cand_clean):
-                                is_allowed_1depth = True
-                                
-                            if not is_allowed_1depth:
-                                continue
-
                         if SCAN_MODE == "FULL_SCAN":
                             is_garbage = False
                             if re.search(r'(습니다|입니다|합니다|됩니다|한다|된다|이다|있다|없다|같다|기대된다|판단된다|보인다|하였다|되었다|진행함|확인함|관찰함|측정함|평가함|도출함|사용함|나타남|수행함|제조함|분석함|계산함)\.\s+[가-힣A-Z]', text): 
@@ -710,8 +699,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                     if not re.search(r'(결과|효과|성과|교과|경로|회로|역할|총괄|분할|개요|필요성|중요성|목표|현황)\s*$', text): 
                                         is_garbage = True
                             
-                            # 요약문 등 강제 대상일 경우 가비지 필터를 무시하고 통과시킴
-                            if is_garbage and not is_summary_forced: continue
+                            if is_garbage: continue
 
                         resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'level': cand_level_toc, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
 
@@ -825,7 +813,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         strict_items_3 = []
         if MAX_DEPTH >= 3:
-            st_logger.print("\n4-B. [독립 스캔] 3-depth 시퀀스 유효성 검증 중 (1, 2-depth 보존)...")
+            st_logger.print("\n4-B. [독립 스캔] 3-depth 시퀀 유효성 검증 중 (1, 2-depth 보존)...")
             
             merged_for_pass2 = strict_items_1_2 + [i for i in resolved_items if i['level'] == 3]
             merged_for_pass2.sort(key=get_sort_key)
@@ -898,32 +886,19 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             
             if '영문목차' in clean_title: continue
             
-            # --- 유령항목 강제 1-depth 단일화 및 예외 처리 ---
-            if '영문요약서' in clean_title:
-                ghost_key = 'Summary'
-            else:
-                matched_kw = None
-                # 길이 제한 추가하여 본문 안의 긴 문장 통과 방지
-                if len(clean_title) <= 25:
-                    for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
-                        if kw in clean_title and not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
-                            matched_kw = kw
-                            break
-                        
-                if matched_kw:
-                    if matched_kw == 'summary': ghost_key = 'Summary'
-                    elif matched_kw == 'contents': ghost_key = 'Contents'
-                    else: ghost_key = matched_kw
-                elif not re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title):
-                    if 'content' in clean_title and not re.search(r'[가-힣]', clean_title):
-                        ghost_key = 'Contents'
-                    else:
-                        for g in ['별도제출물', '참고문헌']:
-                            if g in clean_title:
-                                if g == '별도제출물':
-                                    ghost_key = '제출문'
-                                    break
-                                if len(clean_title) <= len(g) + 12: ghost_key = g; break
+            if not re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title):
+                if '영문요약서' in clean_title or ('summary' in clean_title and not re.search(r'[가-힣]', clean_title)):
+                    ghost_key = 'Summary'
+                elif ('contents' in clean_title or 'content' in clean_title) and not re.search(r'[가-힣]', clean_title):
+                    ghost_key = 'Contents'
+                else:
+                    for g in ['제출문', '별도제출물', '요약서', '요약문', '참고문헌']:
+                        if g in clean_title:
+                            if g == '별도제출물':
+                                ghost_key = '제출문'
+                                break
+                            if g == '요약문' and '요약문' in clean_title: ghost_key = g; break
+                            if len(clean_title) <= len(g) + 12: ghost_key = g; break
                     
             if ghost_key:
                 if ghost_key in seen_ghosts: continue  
