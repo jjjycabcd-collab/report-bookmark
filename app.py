@@ -246,7 +246,6 @@ def is_ghost_title(clean_t):
     if '영문목차' in clean_t: return True
     if '영문요약서' in clean_t: return True
     
-    # --- 지정 키워드 강제 인식 로직 (길이 25 제한하여 가비지 문장 방지) ---
     if len(clean_t) <= 25:
         for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
             if kw in clean_t:
@@ -265,7 +264,6 @@ def is_restricted_1depth(clean_title):
     if '영문목차' in clean_title: return True
     if '영문요약서' in clean_title: return True
     
-    # --- 지정 키워드 강제 인식 로직 (길이 25 제한하여 가비지 문장 방지) ---
     if len(clean_title) <= 25:
         for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
             if kw in clean_title:
@@ -407,17 +405,20 @@ def get_seq_info(title):
     if m: return ('alpha_dot', ord(m.group(1).upper()) - 64)
     return (None, None)
 
-def get_parent_1depth(p_idx, y0, items):
-    for item in reversed(items):
-        if item['level'] == 1:
-            if item['page_idx'] < p_idx or (item['page_idx'] == p_idx and item['y0'] <= y0 + 10.0):
-                return CLEAN_PATTERN.sub('', item['title'].replace('[점검] ', '')) or str(item['toc_idx'])
-    return None
-
 def get_sort_key(x):
     y_val = x['y0'] if x['y0'] > 0.0 else -1.0
     t_val = x['toc_idx'] if x.get('toc_idx', 999) != 999 else 9999
     return (x['page_idx'], y_val, t_val)
+
+# [수정] 부모 1-depth 추적 시 리스트 순서 의존 버그 수정 (실제 페이지/좌표 기반으로 정렬 후 탐색)
+def get_parent_1depth(p_idx, y0, items):
+    valid_1depths = [i for i in items if i['level'] == 1]
+    valid_1depths.sort(key=get_sort_key)
+    
+    for item in reversed(valid_1depths):
+        if item['page_idx'] < p_idx or (item['page_idx'] == p_idx and item['y0'] <= y0 + 10.0):
+            return CLEAN_PATTERN.sub('', item['title'].replace('[점검] ', '')) or str(item['toc_idx'])
+    return None
 
 # ==========================================
 # 통합 프로세스 로직 
@@ -685,13 +686,11 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 is_dup = True; break
 
                     if not is_dup:
-                        # [핵심 수정] 1-depth는 기본적으로 목차(TOC)에서 넘어온 항목만 인정 (가비지 방지)
+                        # 1-depth는 기본적으로 목차(TOC)에서 넘어온 항목 및 명확한 구조적 제목만 인정
                         if cand_level_toc == 1:
                             is_allowed_1depth = False
-                            # 요약문, 제출문 등 지정 유령항목은 예외 허용
                             if is_summary_forced or is_ghost_title(cand_clean):
                                 is_allowed_1depth = True
-                            # 명확한 구조적 제목(제n장, 붙임, 별첨, 부록 등)도 예외 허용
                             elif re.match(r'^(제\d+장|붙임|별첨|부록)', cand_clean):
                                 is_allowed_1depth = True
                                 
@@ -710,7 +709,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                     if not re.search(r'(결과|효과|성과|교과|경로|회로|역할|총괄|분할|개요|필요성|중요성|목표|현황)\s*$', text): 
                                         is_garbage = True
                             
-                            # 요약문 등 강제 대상일 경우 가비지 필터를 무시하고 통과시킴
                             if is_garbage and not is_summary_forced: continue
 
                         resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'level': cand_level_toc, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
@@ -903,7 +901,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 ghost_key = 'Summary'
             else:
                 matched_kw = None
-                # 길이 제한 추가하여 본문 안의 긴 문장 통과 방지
                 if len(clean_title) <= 25:
                     for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
                         if kw in clean_title and not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
