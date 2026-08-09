@@ -246,15 +246,15 @@ def is_ghost_title(clean_t):
     if '영문목차' in clean_t: return True
     if '영문요약서' in clean_t: return True
     
-    # --- 요약문 강제 인식 로직 추가 ---
-    if '요약문' in clean_t:
-        # 단, 첨부, 붙임, 책임자가 포함된 경우는 제외
-        if not any(x in clean_t for x in ['첨부', '붙임', '책임자']):
-            return True
-            
-    for g in ['제출문', '별도제출물', '요약서', '표지', '목차', '참고문헌']:
+    # --- 지정 키워드 강제 인식 로직 추가 ---
+    for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
+        if kw in clean_t:
+            if not any(x in clean_t for x in ['첨부', '붙임', '책임자']):
+                return True
+                
+    for g in ['별도제출물', '표지', '목차', '참고문헌']:
         if g in clean_t and len(clean_t) <= len(g) + 8: return True
-    for g in ['summary', 'contents', 'content']:
+    for g in ['content']:
         if g in clean_t and len(clean_t) <= len(g) + 5 and not re.search(r'[가-힣]', clean_t): return True
     return False
 
@@ -264,14 +264,15 @@ def is_restricted_1depth(clean_title):
     if '영문목차' in clean_title: return True
     if '영문요약서' in clean_title: return True
     
-    # --- 요약문 강제 인식 로직 추가 ---
-    if '요약문' in clean_title:
-        if not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
-            return True
-            
-    for g in ['표지', '제출문', '별도제출물', '요약서', '목차', '참고문헌']:
+    # --- 지정 키워드 강제 인식 로직 추가 ---
+    for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
+        if kw in clean_title:
+            if not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
+                return True
+                
+    for g in ['표지', '별도제출물', '목차', '참고문헌']:
         if g in clean_title and len(clean_title) <= len(g) + 12: return True
-    for g in ['summary', 'contents', 'content']:
+    for g in ['content']:
         if g in clean_title and len(clean_title) <= len(g) + 5 and not re.search(r'[가-힣]', clean_title): return True
     if re.match(r'^\d*(붙임|별첨|부록)', clean_title): return True
     return False
@@ -612,12 +613,14 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 text_nospace = text.replace(" ", "")
                 is_special_kws_match = all(k in text_nospace for k in ["붙임", "연구책임자", "대표", "연구실적"])
                 
-                # --- 요약문 강제 추출 ---
-                clean_for_summary = CLEAN_PATTERN.sub('', text)
+                # --- 강제 추출 (요약문, 제출문, 요약서, summary, contents) ---
+                clean_for_summary = CLEAN_PATTERN.sub('', text).lower()
                 is_summary_forced = False
-                if '요약문' in clean_for_summary and len(clean_for_summary) <= 20: # 타이틀 길이 제한
-                    if not any(x in clean_for_summary for x in ['첨부', '붙임', '책임자']):
-                        is_summary_forced = True
+                for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
+                    if kw in clean_for_summary and len(clean_for_summary) <= 20: # 타이틀 길이 제한
+                        if not any(x in clean_for_summary for x in ['첨부', '붙임', '책임자']):
+                            is_summary_forced = True
+                            break
                 
                 if is_special_kws_match:
                     mapped = False
@@ -691,7 +694,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                     if not re.search(r'(결과|효과|성과|교과|경로|회로|역할|총괄|분할|개요|필요성|중요성|목표|현황)\s*$', text): 
                                         is_garbage = True
                             
-                            # 요약문일 경우 가비지 필터를 무시하고 통과시킴
+                            # 요약문 등 강제 대상일 경우 가비지 필터를 무시하고 통과시킴
                             if is_garbage and not is_summary_forced: continue
 
                         resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'level': cand_level_toc, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
@@ -879,21 +882,30 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             
             if '영문목차' in clean_title: continue
             
-            # --- 요약문 강제 1-depth 단일화 및 예외 처리 ---
-            if '요약문' in clean_title and not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
-                ghost_key = '요약문'
-            elif not re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title):
-                if '영문요약서' in clean_title or ('summary' in clean_title and not re.search(r'[가-힣]', clean_title)):
-                    ghost_key = 'Summary'
-                elif ('contents' in clean_title or 'content' in clean_title) and not re.search(r'[가-힣]', clean_title):
-                    ghost_key = 'Contents'
-                else:
-                    for g in ['제출문', '별도제출물', '요약서', '참고문헌']:
-                        if g in clean_title:
-                            if g == '별도제출물':
-                                ghost_key = '제출문'
-                                break
-                            if len(clean_title) <= len(g) + 12: ghost_key = g; break
+            # --- 유령항목 강제 1-depth 단일화 및 예외 처리 ---
+            if '영문요약서' in clean_title:
+                ghost_key = 'Summary'
+            else:
+                matched_kw = None
+                for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
+                    if kw in clean_title and not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
+                        matched_kw = kw
+                        break
+                        
+                if matched_kw:
+                    if matched_kw == 'summary': ghost_key = 'Summary'
+                    elif matched_kw == 'contents': ghost_key = 'Contents'
+                    else: ghost_key = matched_kw
+                elif not re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title):
+                    if 'content' in clean_title and not re.search(r'[가-힣]', clean_title):
+                        ghost_key = 'Contents'
+                    else:
+                        for g in ['별도제출물', '참고문헌']:
+                            if g in clean_title:
+                                if g == '별도제출물':
+                                    ghost_key = '제출문'
+                                    break
+                                if len(clean_title) <= len(g) + 12: ghost_key = g; break
                     
             if ghost_key:
                 if ghost_key in seen_ghosts: continue  
