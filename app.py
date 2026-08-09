@@ -108,6 +108,7 @@ TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MUL
 
 KOR_IDX = "가나다라마바사아자차카타파하"
 
+# [수정] ( 1 ), ( a ), ( b ) 등 괄호 안의 공백 패턴 및 알파벳 괄호 기호 인식 추가
 CANDIDATE_PATTERN = re.compile(
     rf'^\s*('
     rf'제\s*\d+\s*[장절][\.\:]?\s*|'
@@ -119,13 +120,14 @@ CANDIDATE_PATTERN = re.compile(
     rf'[{KOR_IDX}][\.\)）]\s*|'
     rf'[1-9]\d*(?:-\d+)+[\.\)]?\s*|'
     rf'[1-9]\d*[\)）]\s*|'
-    rf'\([1-9]\d*\)\s*|'
-    rf'\([{KOR_IDX}]\)\s*|'
+    rf'\(\s*[1-9]\d*\s*\)\s*|'
+    rf'\(\s*[{KOR_IDX}]\s*\)\s*|'
+    rf'\(\s*[A-Za-z]\s*\)\s*|'
     rf'[A-Za-z][\.\)]\s*'
     rf')'
 )
 
-PREFIX_STRIP_PATTERN = re.compile(rf'^\s*(Chapter\s*\d+|Section\s*\d+|제\s*\d+\s*[장절]|<?\s*\[?\s*(?:(?:별\s*도\s*)?제\s*출\s*(?:문|물)|(?:보\s*고\s*서\s*)?요\s*약\s*서|(?:연\s*구\s*결\s*과\s*)?요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?|<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?|[{KOR_IDX}]|[1-9]\d*(?:\.\d+)*|(?:\d+-)+\d+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\)）]|\d+|[A-Za-z])\s*[\.\:\)）]?\s*', re.IGNORECASE)
+PREFIX_STRIP_PATTERN = re.compile(rf'^\s*(Chapter\s*\d+|Section\s*\d+|제\s*\d+\s*[장절]|<?\s*\[?\s*(?:(?:별\s*도\s*)?제\s*출\s*(?:문|물)|(?:보\s*고\s*서\s*)?요\s*약\s*서|(?:연\s*구\s*결\s*과\s*)?요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?|<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?|[{KOR_IDX}]|[1-9]\d*(?:\.\d+)*|(?:\d+-)+\d+|\(\s*[1-9]\d*\s*\)|\(\s*[{KOR_IDX}]\s*\)|\(\s*[A-Za-z]\s*\)|[{KOR_IDX}][\)）]|\d+|[A-Za-z])\s*[\.\:\)）]?\s*', re.IGNORECASE)
 
 KOR_CHARS = list(KOR_IDX)
 KOR_MAP = {k: v + 1 for v, k in enumerate(KOR_CHARS)}
@@ -157,16 +159,13 @@ class PageCache:
             page = self.doc[p_idx]
             bboxes = []
             
-            # 1. 일반 테이블 탐지 배제
             for t in page.find_tables():
                 bboxes.append(fitz.Rect(t.bbox))
                 
-            # 2. 벡터 드로잉(Box) 탐지 배제 -> 박스 안 가짜 목차 원천 차단
             for d in page.get_drawings():
                 for item in d.get("items", []):
                     if item[0] in ("re", "qu"):  
                         rect = fitz.Rect(item[1])
-                        # 유의미한 크기의 사각형이면서 전체 페이지 테두리가 아닌 경우 배제
                         if 80 < rect.width < page.rect.width * 0.95 and 30 < rect.height < page.rect.height * 0.95:
                             bboxes.append(rect)
                             
@@ -188,7 +187,6 @@ class PageCache:
                 full_block_text = fix_broken_characters("".join(block_spans).replace('\n', ' ').strip())
                 
                 clean_block_for_check = full_block_text.replace(" ", "")
-                # 주의사항, 워터마크 등 불필요 문구가 있는 블록 무시
                 if any(fs in clean_block_for_check for fs in ["이보고서는", "발표하는때에는", "국가과학기술기밀", "국가연구개발보고서원문", "동의없이상업적", "이연구개발내용을대외적으로", "반드시과학기술정보통신부"]): 
                     continue  
                     
@@ -216,8 +214,6 @@ class PageCache:
                             main_color = s.get("color", 0)
                             
                     text = fix_broken_characters(text.strip())
-                    
-                    # 라인 안에 섞인 워터마크 잔재 청소
                     text = re.sub(r'국가연구개발\s*보고서원문.*?사용할\s*수\s*없습니다\.?', '', text).strip()
                     text = re.sub(r'\[별첨\]\s*성과\s*증빙자료.*', '[별첨] 성과 증빙자료', text).strip()
 
@@ -256,7 +252,7 @@ def extract_prefix(t, custom_regex_1=None, custom_regex_2=None, custom_regex_3=N
         m = custom_regex_3.match(t)
         if m: return re.sub(r'\s+', '', m.group(1))
         
-    m = re.match(rf'^\s*(제\s*\d+\s*[장절]|[1-9]\d*(?:\.\d+)+|[{KOR_IDX}][-\.]\d+|[1-9]\d*(?:-\d+)+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\.\)）]|[1-9]\d*[\.\)）]|[A-Za-z][\.\)]|[1-9]\d*(?=\s+[가-힣a-zA-Z]))', t)
+    m = re.match(rf'^\s*(제\s*\d+\s*[장절]|[1-9]\d*(?:\.\d+)+|[{KOR_IDX}][-\.]\d+|[1-9]\d*(?:-\d+)+|\(\s*[1-9]\d*\s*\)|\(\s*[{KOR_IDX}]\s*\)|\(\s*[A-Za-z]\s*\)|[{KOR_IDX}][\.\)）]|[1-9]\d*[\.\)）]|[A-Za-z][\.\)]|[1-9]\d*(?=\s+[가-힣a-zA-Z]))', t)
     if m: return re.sub(r'\s+', '', m.group(1))
     return None
 
@@ -392,8 +388,10 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         if is_3depth_in_jang(t): return 3
         return 99 
         
+    # [수정/추가] 괄호 안에 공백이 있는 경우 ( 1 ), ( a ) 등 포괄하여 3-depth 판별 적용
+    if re.match(r'^\(\s*[1-9]\d*\s*\)\s*', t) or re.match(rf'^\(\s*[{KOR_IDX}]\s*\)\s*', t) or re.match(r'^\(\s*[A-Za-z]\s*\)\s*', t): return 3
+    
     if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+-\d+[\.\)]?', t): return 3
-    if re.match(r'^\([1-9]\d*\)\s*', t) or re.match(rf'^\([{KOR_IDX}]\)\s*', t): return 3
 
     if re.match(r'^제\s*\d+\s*절', t): return 2
     if re.match(r'^[1-9]\d*\.\d+[\.\s]?', t): return 2 
@@ -410,7 +408,7 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         
     return 2
 
-# [수정] 30 이상의 번호는 목차로 오인하지 않도록 강제 제한 (연도/인용번호 등 가비지 방지)
+# [수정] 모든 번호 추출 상한선(30) 추가 (연도/논문인용 등의 가비지 방지)
 def get_seq_info(title):
     t = title.strip()
     m = re.match(r'^([1-9]\d*(?:\.\d+)+)\.(\d+)[\.\)]?\s*', t)
@@ -441,6 +439,8 @@ def get_seq_info(title):
     if m: 
         sn = int(m.group(1))
         if sn <= 30: return ('num_paren_right', sn)
+    m = re.match(r'^\(\s*([A-Za-z])\s*\)\s*', t)
+    if m: return ('alpha_paren_both', ord(m.group(1).upper()) - 64)
     m = re.match(rf'^([{KOR_IDX}])\s*\.\s*', t)
     if m: return ('kor_dot', KOR_MAP.get(m.group(1)))
     m = re.match(rf'^([{KOR_IDX}])\s*[\)）]\s*', t)
@@ -919,7 +919,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             merged_for_pass2 = strict_items_1_2 + [i for i in resolved_items if i['level'] == 3]
             merged_for_pass2.sort(key=get_sort_key)
             
-            # [수정/추가] 3-depth가 1-depth 바로 아래에 올 수 있도록 (2-depth가 없어도) 허용
             current_parent_valid = False
             current_seq_state_3 = 0
             current_seq_type_3 = None
