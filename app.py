@@ -212,7 +212,14 @@ class PageCache:
                         if re.match(r'^\s*[1-9]\d*[\)\.]', temp_text): continue
                             
                     line_center = fitz.Point((line_rect.x0 + line_rect.x1) / 2, (line_rect.y0 + line_rect.y1) / 2)
-                    if any(tb.contains(line_center) for tb in exclude_bboxes): continue
+                    
+                    # [수정] 박스/표 안에 있더라도 '요약문' 등 핵심 1-depth 항목은 예외적으로 구출
+                    temp_span_text = "".join([s.get("text", "") for s in l.get("spans", [])])
+                    clean_temp_text = CLEAN_PATTERN.sub('', temp_span_text).lower()
+                    is_essential_ghost = clean_temp_text in ['요약문', '제출문', '요약서', '연구결과요약문', '보고서요약서', 'summary', 'contents', '영문요약서']
+                    
+                    if any(tb.contains(line_center) for tb in exclude_bboxes) and not is_essential_ghost: 
+                        continue
                         
                     text, last_x1, max_size, main_flags, main_color, main_font = "", -1, 0.0, 0, 0, ""
                     for s in l.get("spans", []):
