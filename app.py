@@ -210,7 +210,10 @@ class PageCache:
                     text, last_x1, max_size, main_flags, main_color = "", -1, 0.0, 0, 0
                     for s in l.get("spans", []):
                         span_text, s_x0 = s.get("text", ""), s["bbox"][0]
-                        if last_x1 != -1 and s_x0 - last_x1 > 3.0 and not text.endswith(' ') and not span_text.startswith(' '): text += " "
+                        f_size = s.get("size", 10.0)
+                        # [수정] 고정 수치(3.0) 대신 폰트 크기에 비례하는 가변 공백 인식(0.15em) 적용
+                        if last_x1 != -1 and s_x0 - last_x1 > (f_size * 0.15) and not text.endswith(' ') and not span_text.startswith(' '): 
+                            text += " "
                         text += span_text
                         last_x1 = s["bbox"][2]
                         if s.get("size", 0.0) > max_size: 
@@ -333,7 +336,10 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
             text, last_x1, max_size, main_flags, main_color = "", -1, 0.0, 0, 0
             for s in l.get("spans", []):
                 span_text, s_x0 = s.get("text", ""), s["bbox"][0]
-                if last_x1 != -1 and s_x0 - last_x1 > 3.0 and not text.endswith(' ') and not span_text.startswith(' '): text += " "
+                f_size = s.get("size", 10.0)
+                # [수정] 가변 공백 인식(0.15em) 적용
+                if last_x1 != -1 and s_x0 - last_x1 > (f_size * 0.15) and not text.endswith(' ') and not span_text.startswith(' '): 
+                    text += " "
                 text += span_text
                 last_x1 = s["bbox"][2]
                 if s.get("size", 0.0) > max_size: 
@@ -356,14 +362,23 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
     for b in dict_data.get("blocks", []):
         if b.get("type") != 0: continue
         block_text, min_y0, max_size, main_flags, main_color = "", 9999.0, 0.0, 0, 0
+        last_x1 = -1
         for l in b.get("lines", []):
             if l["bbox"][1] < min_y0: min_y0 = l["bbox"][1]
             for s in l.get("spans", []):
-                block_text += s.get("text", "")
+                span_text, s_x0 = s.get("text", ""), s["bbox"][0]
+                f_size = s.get("size", 10.0)
+                # [수정] 가변 공백 인식(0.15em) 적용
+                if last_x1 != -1 and s_x0 - last_x1 > (f_size * 0.15) and not block_text.endswith(' ') and not span_text.startswith(' '): 
+                    block_text += " "
+                block_text += span_text
+                last_x1 = s["bbox"][2]
                 if s.get("size", 0.0) > max_size: 
                     max_size = s.get("size", 0.0)
                     main_flags = s.get("flags", 0)
                     main_color = s.get("color", 0)
+            if not block_text.endswith(' '): block_text += " "
+            last_x1 = -1
         
         block_text = fix_broken_characters(block_text.strip())
         b_prefix = extract_prefix(block_text, custom_regex_1, custom_regex_2, custom_regex_3)
@@ -721,8 +736,16 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         if item['page_idx'] == p_idx and abs(item['y0'] - y0) < 5.0:
                             item_prefix = extract_prefix(item['title'].replace('[점검] ', ''), rx_lvl1, rx_lvl2, rx_lvl3)
                             if cand_prefix and item_prefix and cand_prefix != item_prefix: continue 
+                            
+                            # [수정] 원본 띄어쓰기 보존 (목차 내용과 글자가 완전히 일치할 경우 띄어쓰기 우선 반영)
+                            old_t = item['title'].replace('[점검] ', '')
+                            if CLEAN_PATTERN.sub('', old_t) == cand_clean and old_t.count(' ') > text.count(' '):
+                                final_title = old_t
+                            else:
+                                final_title = text
+                                
                             item['is_failed'], item['body_matched'] = False, True
-                            if '점검' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
+                            item['title'] = final_title
                             is_dup = True; break
                                 
                     if not is_dup and cand_prefix:
@@ -745,8 +768,14 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                     if len(cand_clean) > len(CLEAN_PATTERN.sub('', item['title'])) + 15:
                                         continue
                                 
-                                item.update({'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'is_failed': False, 'body_matched': True})
-                                if '점검' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
+                                # [수정] 원본 띄어쓰기 보존 
+                                old_t = item['title'].replace('[점검] ', '')
+                                if CLEAN_PATTERN.sub('', old_t) == cand_clean and old_t.count(' ') > text.count(' '):
+                                    final_title = old_t
+                                else:
+                                    final_title = text
+
+                                item.update({'title': final_title, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'is_failed': False, 'body_matched': True})
                                 is_dup = True; break
                                     
                     if not is_dup:
