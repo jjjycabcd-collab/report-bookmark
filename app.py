@@ -211,7 +211,6 @@ class PageCache:
                     for s in l.get("spans", []):
                         span_text, s_x0 = s.get("text", ""), s["bbox"][0]
                         f_size = s.get("size", 10.0)
-                        # [수정] 고정 수치(3.0) 대신 폰트 크기에 비례하는 가변 공백 인식(0.15em) 적용
                         if last_x1 != -1 and s_x0 - last_x1 > (f_size * 0.15) and not text.endswith(' ') and not span_text.startswith(' '): 
                             text += " "
                         text += span_text
@@ -337,7 +336,6 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
             for s in l.get("spans", []):
                 span_text, s_x0 = s.get("text", ""), s["bbox"][0]
                 f_size = s.get("size", 10.0)
-                # [수정] 가변 공백 인식(0.15em) 적용
                 if last_x1 != -1 and s_x0 - last_x1 > (f_size * 0.15) and not text.endswith(' ') and not span_text.startswith(' '): 
                     text += " "
                 text += span_text
@@ -368,7 +366,6 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
             for s in l.get("spans", []):
                 span_text, s_x0 = s.get("text", ""), s["bbox"][0]
                 f_size = s.get("size", 10.0)
-                # [수정] 가변 공백 인식(0.15em) 적용
                 if last_x1 != -1 and s_x0 - last_x1 > (f_size * 0.15) and not block_text.endswith(' ') and not span_text.startswith(' '): 
                     block_text += " "
                 block_text += span_text
@@ -737,7 +734,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                             item_prefix = extract_prefix(item['title'].replace('[점검] ', ''), rx_lvl1, rx_lvl2, rx_lvl3)
                             if cand_prefix and item_prefix and cand_prefix != item_prefix: continue 
                             
-                            # [수정] 원본 띄어쓰기 보존 (목차 내용과 글자가 완전히 일치할 경우 띄어쓰기 우선 반영)
                             old_t = item['title'].replace('[점검] ', '')
                             if CLEAN_PATTERN.sub('', old_t) == cand_clean and old_t.count(' ') > text.count(' '):
                                 final_title = old_t
@@ -768,7 +764,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                     if len(cand_clean) > len(CLEAN_PATTERN.sub('', item['title'])) + 15:
                                         continue
                                 
-                                # [수정] 원본 띄어쓰기 보존 
                                 old_t = item['title'].replace('[점검] ', '')
                                 if CLEAN_PATTERN.sub('', old_t) == cand_clean and old_t.count(' ') > text.count(' '):
                                     final_title = old_t
@@ -908,21 +903,25 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 is_from_toc = (item.get('toc_idx', 999) != 999)
                 item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0))
                 
+                # [수정] 2-depth 번호 순서가 맞지 않거나 누락된 경우 [점검] 태그 달기 로직 보강
                 if sn is not None and st_type is not None:
-                    if is_from_toc:
+                    if current_seq_type[lvl] is None:
+                        if sn > 1: is_jump_error = True
                         current_seq_type[lvl] = st_type
                         current_seq_state[lvl] = sn
                         current_font_profile[lvl] = item_profile
                     else:
-                        if current_seq_type[lvl] is None:
-                            if sn > 1: is_jump_error = True
+                        if is_from_toc:
+                            if st_type != current_seq_type[lvl] or sn <= current_seq_state[lvl] or sn > current_seq_state[lvl] + 1:
+                                is_jump_error = True
                             current_seq_type[lvl] = st_type
                             current_seq_state[lvl] = sn
                             current_font_profile[lvl] = item_profile
                         else:
                             if st_type != current_seq_type[lvl]: skip_item = True
                             elif sn <= current_seq_state[lvl]: skip_item = True
-                            elif sn > current_seq_state[lvl] + 1: skip_item = True
+                            elif sn > current_seq_state[lvl] + 1: 
+                                is_jump_error = True  
                             else:
                                 base_profile = current_font_profile[lvl]
                                 if base_profile:
@@ -931,10 +930,10 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                     if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
                                         skip_item = True
                                         
-                            if not skip_item and not is_jump_error:
+                            if not skip_item:
                                 current_seq_state[lvl] = sn
                 else:
-                    skip_item = True
+                    if not is_from_toc: skip_item = True
 
                 if skip_item: continue 
                             
@@ -977,21 +976,25 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     is_from_toc = (item.get('toc_idx', 999) != 999)
                     item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0))
                     
+                    # [수정] 3-depth도 2-depth와 동일하게 번호 순서가 맞지 않거나 누락된 경우 [점검] 태그 달기
                     if sn is not None and st_type is not None:
-                        if is_from_toc:
+                        if current_seq_type_3 is None:
+                            if sn > 1: is_jump_error = True
                             current_seq_type_3 = st_type
                             current_seq_state_3 = sn
                             current_font_profile_3 = item_profile
                         else:
-                            if current_seq_type_3 is None:
-                                if sn > 1: is_jump_error = True
+                            if is_from_toc:
+                                if st_type != current_seq_type_3 or sn <= current_seq_state_3 or sn > current_seq_state_3 + 1:
+                                    is_jump_error = True
                                 current_seq_type_3 = st_type
                                 current_seq_state_3 = sn
                                 current_font_profile_3 = item_profile
                             else:
                                 if st_type != current_seq_type_3: skip_item = True
                                 elif sn <= current_seq_state_3: skip_item = True
-                                elif sn > current_seq_state_3 + 1: skip_item = True
+                                elif sn > current_seq_state_3 + 1: 
+                                    is_jump_error = True 
                                 else:
                                     base_profile = current_font_profile_3
                                     if base_profile:
@@ -999,10 +1002,10 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                         i_size, i_flags, i_color = item_profile
                                         if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
                                             skip_item = True
-                                if not skip_item and not is_jump_error:
+                                if not skip_item:
                                     current_seq_state_3 = sn
                     else:
-                        skip_item = True
+                        if not is_from_toc: skip_item = True
                         
                     if skip_item: continue
                     
