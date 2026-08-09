@@ -118,7 +118,6 @@ TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MUL
 
 KOR_IDX = "가나다라마바사아자차카타파하"
 
-# [수정] 기호 뒤의 띄어쓰기가 없어도(예: 1)연구) 완벽하게 식별하도록 \s*로 강화
 CANDIDATE_PATTERN = re.compile(
     rf'^\s*('
     rf'제\s*\d+\s*[장절][\.\:]?\s*|'
@@ -248,7 +247,7 @@ def extract_prefix(t, custom_regex_1=None, custom_regex_2=None, custom_regex_3=N
         m = custom_regex_3.match(t)
         if m: return re.sub(r'\s+', '', m.group(1))
         
-    m = re.match(rf'^\s*(제\s*\d+\s*[장절]|[1-9]\d*(?:\.\d+)+|[{KOR_IDX}][-\.]\d+|[1-9]\d*(?:-\d+)+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\.\)）]|[1-9]\d*[\.\)）]|[A-Z][\.\)]|[1-9]\d*(?=\s+[가-힣a-zA-Z]))', t)
+    m = re.match(rf'^\s*(제\s*\d+\s*[장절]|[1-9]\d*(?:\.\d+)+|[{KOR_IDX}][-\.]\d+|[1-9]\d*(?:-\d+)+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\.\)）]|[1-9]\d*[\.\)）]|[A-Za-z][\.\)]|[1-9]\d*(?=\s+[가-힣a-zA-Z]))', t)
     if m: return re.sub(r'\s+', '', m.group(1))
     return None
 
@@ -341,7 +340,6 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
             
     return None, 0.0, 0, 0
 
-# [수정] 기호 뒤의 띄어쓰기(공백)가 없어도 정밀하게 뎁스를 판별할 수 있도록 \s*로 교체
 def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_scan=False, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None):
     t = title.strip()
     clean_t = CLEAN_PATTERN.sub('', t)
@@ -359,8 +357,9 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         if is_3depth_in_jang(t): return 3
         return 99 
         
+    # [수정] a)와 같은 소문자 알파벳 기호를 3-depth로 묶는 정규식 삭제 (2-depth로 인식 유도)
     if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+-\d+[\.\)]?', t): return 3
-    if re.match(r'^\([1-9]\d*\)\s*', t) or re.match(rf'^\([{KOR_IDX}]\)\s*', t) or re.match(r'^[a-z]\)\s*', t): return 3
+    if re.match(r'^\([1-9]\d*\)\s*', t) or re.match(rf'^\([{KOR_IDX}]\)\s*', t): return 3
 
     if re.match(r'^제\s*\d+\s*절', t): return 2
     if re.match(r'^[1-9]\d*\.\d+[\.\s]?', t): return 2 
@@ -377,7 +376,6 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         
     return 2
 
-# [수정] 동일하게 시퀀스 정보 추출 시 기호 뒤 공백이 없어도 완벽히 추출되도록 \s* 적용
 def get_seq_info(title):
     t = title.strip()
     m = re.match(r'^([1-9]\d*(?:\.\d+)+)\.(\d+)[\.\)]?\s*', t)
@@ -970,7 +968,7 @@ TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_va
 EXCLUDE_FOOTNOTES = st.sidebar.checkbox("3. 하단 각주(Footnote) 강제 배제", value=False)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 맞춤형 기 강제 지정 (옵션)")
+st.sidebar.subheader("🎯 맞춤형 기호 강제 지정 (옵션)")
 st.sidebar.caption("본문 폰트 차이로 판별이 꼬일 때 입력하세요.<br/>미입력 시 기본 자동 판별이 작동합니다.", unsafe_allow_html=True)
 CUSTOM_LVL1 = st.sidebar.text_input("1-depth (대분류) 기호", value="", placeholder="예: 1.")
 CUSTOM_LVL2 = st.sidebar.text_input("2-depth (중분류) 기호", value="", placeholder="예: 1-1.")
