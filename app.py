@@ -5,7 +5,6 @@ import os
 import unicodedata
 import tempfile
 import time
-import json
 
 # ==========================================
 # [스트림릿 웹 전용 헬퍼 함수] 로그 색상 렌더링 및 영역 분리
@@ -1116,28 +1115,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 
 st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
-
-# --- 도움말 팝업 링크 추가 ---
-import json
-try:
-    with open("bookmark_help.html", "r", encoding="utf-8") as f:
-        help_html_content = f.read()
-except Exception:
-    help_html_content = "<h2>도움말 파일을 찾을 수 없습니다. (bookmark_help.html)</h2>"
-
-# 자바스크립트 변수로 안전하게 넘기기 위해 JSON 인코딩 처리
-js_safe_html = json.dumps(help_html_content)
-
-help_link_html = f"""
-<div style="margin-top: -10px; margin-bottom: 20px;">
-    <a href="#" onclick='var w = window.open("", "HelpWindow", "width=850,height=750,scrollbars=yes"); w.document.write({js_safe_html}); w.document.close(); return false;' style="display: inline-block; padding: 6px 12px; font-size: 14px; font-weight: 600; color: #0068c9; background-color: #f0f2f6; border: 1px solid #cce1ff; border-radius: 6px; text-decoration: none; cursor: pointer;">
-        💡 사용 방법 및 도움말 보기
-    </a>
-</div>
-"""
-st.markdown(help_link_html, unsafe_allow_html=True)
-# -----------------------------
-
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
 st.sidebar.header("⚙️ 실행 옵션 설정")
