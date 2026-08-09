@@ -118,12 +118,12 @@ TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MUL
 
 KOR_IDX = "가나다라마바사아자차카타파하"
 
-# [수정] 연구결과 요약문 등 파생 패턴 대응 추가
+# [수정] 제출문, (별도) 제출물 등 변형 패턴 추가
 CANDIDATE_PATTERN = re.compile(
     rf'^\s*('
     rf'제\s*\d+\s*[장절][\.\:]?(?:\s+|$)|'
     rf'<?\[?(?:붙임|별첨|부록)\s*\d*\]?(?:\s+|$)|'
-    rf'<?\s*\[?\s*(?:제\s*출\s*문|(?:보\s*고\s*서\s*)?요\s*약\s*서|(?:연\s*구\s*결\s*과\s*)?요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?(?:\s+|$)|'
+    rf'<?\s*\[?\s*(?:(?:별\s*도\s*)?제\s*출\s*(?:문|물)|(?:보\s*고\s*서\s*)?요\s*약\s*서|(?:연\s*구\s*결\s*과\s*)?요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?(?:\s+|$)|'
     rf'[1-9]\d*(?:\.\d+)+[\.\)]?(?:\s+|$)|'
     rf'[1-9]\d*\.(?:\s+|$)|'
     rf'[1-9]\d*(?=\s+[가-힣a-zA-Z])|'
@@ -136,8 +136,8 @@ CANDIDATE_PATTERN = re.compile(
     rf')'
 )
 
-# [수정] 전처리 과정에서도 연구결과 요약문 및 알파벳 a-z 패턴 완벽 대응
-PREFIX_STRIP_PATTERN = re.compile(rf'^\s*(Chapter\s*\d+|Section\s*\d+|제\s*\d+\s*[장절]|<?\s*\[?\s*(?:제\s*출\s*문|(?:보\s*고\s*서\s*)?요\s*약\s*서|(?:연\s*구\s*결\s*과\s*)?요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?|<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?|[{KOR_IDX}]|[1-9]\d*(?:\.\d+)*|(?:\d+-)+\d+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\)）]|\d+|[A-Za-z])\s*[\.\:\)）]?\s*', re.IGNORECASE)
+# [수정] 전처리 과정에서도 해당 공백 패턴이 정상적으로 처리되도록 추가
+PREFIX_STRIP_PATTERN = re.compile(rf'^\s*(Chapter\s*\d+|Section\s*\d+|제\s*\d+\s*[장절]|<?\s*\[?\s*(?:(?:별\s*도\s*)?제\s*출\s*(?:문|물)|(?:보\s*고\s*서\s*)?요\s*약\s*서|(?:연\s*구\s*결\s*과\s*)?요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?|<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?|[{KOR_IDX}]|[1-9]\d*(?:\.\d+)*|(?:\d+-)+\d+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\)）]|\d+|[A-Za-z])\s*[\.\:\)）]?\s*', re.IGNORECASE)
 
 KOR_CHARS = list(KOR_IDX)
 KOR_MAP = {k: v + 1 for v, k in enumerate(KOR_CHARS)}
@@ -257,7 +257,8 @@ def is_ghost_title(clean_t):
     clean_t = clean_t.lower()
     if '영문목차' in clean_t: return True
     if '영문요약서' in clean_t: return True
-    for g in ['제출문', '요약서', '요약문', '표지', '목차', '참고문헌']:
+    # [수정] 별도제출물 유효성 조건 완벽 병합
+    for g in ['제출문', '별도제출물', '요약서', '요약문', '표지', '목차', '참고문헌']:
         if g in clean_t and len(clean_t) <= len(g) + 8: return True
         if g == '요약문' and '요약문' in clean_t: return True
     for g in ['summary', 'contents', 'content']:
@@ -269,7 +270,8 @@ def is_restricted_1depth(clean_title):
     clean_title = clean_title.lower()
     if '영문목차' in clean_title: return True
     if '영문요약서' in clean_title: return True
-    for g in ['표지', '제출문', '요약서', '요약문', '목차', '참고문헌']:
+    # [수정] 1-depth 제한 로직에도 안전하게 추가
+    for g in ['표지', '제출문', '별도제출물', '요약서', '요약문', '목차', '참고문헌']:
         if g in clean_title and len(clean_title) <= len(g) + 12: return True
         if g == '요약문' and '요약문' in clean_title: return True
     for g in ['summary', 'contents', 'content']:
@@ -342,7 +344,6 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
             
     return None, 0.0, 0, 0
 
-# [수정] a), b) 등 소문자 알파벳 괄호를 2-depth로 인식하도록 정밀 수정
 def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_scan=False, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None):
     t = title.strip()
     clean_t = CLEAN_PATTERN.sub('', t)
@@ -361,9 +362,8 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         return 99 
         
     if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+-\d+[\.\)]?', t): return 3
-    if re.match(r'^\([1-9]\d*\)(?:\s+|$)', t) or re.match(rf'^\([{KOR_IDX}]\)(?:\s+|$)', t): return 3
+    if re.match(r'^\([1-9]\d*\)(?:\s+|$)', t) or re.match(rf'^\([{KOR_IDX}]\)(?:\s+|$)', t) or re.match(r'^[a-z]\)(?:\s+|$)', t): return 3
 
-    # [수정] A. 및 a) 등 A-Za-z 패턴 전체를 2-depth로 분류 (요청사항 반영)
     if re.match(r'^제\s*\d+\s*절', t): return 2
     if re.match(r'^[1-9]\d*\.\d+[\.\s]?', t): return 2 
     if re.match(r'^[1-9]\d*-\d+[\.\)]?', t): return 2 
@@ -379,7 +379,6 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         
     return 2
 
-# [수정] a), b) 도 시퀀스 검증 로직에서 올바르게 트래킹 되도록 A-Za-z 정규식 반영
 def get_seq_info(title):
     t = title.strip()
     m = re.match(r'^([1-9]\d*(?:\.\d+)+)\.(\d+)[\.\)]?(?:\s+|$)', t)
@@ -491,7 +490,8 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         toc_text = re.sub(r'([1-9]\d*[\.\)]|[{KOR_IDX}][\.\)])\s*\n\s*([가-힣a-zA-Z<\[])', r'\1 \2', toc_text)
         toc_text = re.sub(r'(제\s*\d+)\s*\n+\s*(장|절)', r'\1\2', toc_text)
         toc_text = re.sub(r'(제\s*\d+\s*[장절])\s*\n+\s*([가-힣a-zA-Z<\[])', r'\1 \2', toc_text)
-        toc_text = re.sub(r'([가-힣a-zA-Z\,])\s*\n\s*(?!(?:제\s*출\s*문|보\s*고\s*서|요\s*약|목\s*차|표\s*지|참\s*고\s*문\s*헌|Summary|Contents))([가-힣a-zA-Z\(\<\[])', r'\1 \2', toc_text, flags=re.IGNORECASE)
+        # [수정] 전처리에서 '별도 제출물' 찢어짐 방지
+        toc_text = re.sub(r'([가-힣a-zA-Z\,])\s*\n\s*(?!(?:(?:별\s*도\s*)?제\s*출\s*(?:문|물)|보\s*고\s*서|요\s*약|목\s*차|표\s*지|참\s*고\s*문\s*헌|Summary|Contents))([가-힣a-zA-Z\(\<\[])', r'\1 \2', toc_text, flags=re.IGNORECASE)
         toc_text = re.sub(r'([가-힣a-zA-Z\>\]\)])\s*\n+\s*(?:\||[\.·_-]{2,})?\s*(\d+)(?=\s*(\n|$))', r'\1 | \2', toc_text)
 
         raw_items, parsed_titles = [], set()
@@ -893,8 +893,12 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 elif ('contents' in clean_title or 'content' in clean_title) and not re.search(r'[가-힣]', clean_title):
                     ghost_key = 'Contents'
                 else:
-                    for g in ['제출문', '요약서', '요약문', '참고문헌']:
+                    # [수정] 단일화 로직에서 '별도제출물'이 '제출문'으로 묶이도록 처리
+                    for g in ['제출문', '별도제출물', '요약서', '요약문', '참고문헌']:
                         if g in clean_title:
+                            if g == '별도제출물':
+                                ghost_key = '제출문'
+                                break
                             if g == '요약문' and '요약문' in clean_title: ghost_key = g; break
                             if len(clean_title) <= len(g) + 12: ghost_key = g; break
                     
@@ -902,7 +906,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 if ghost_key in seen_ghosts: continue  
                 seen_ghosts.add(ghost_key)
                 
-                # [수정] 참고문헌은 "7. 참고문헌" 등 본문 그대로의 제목을 유지하도록 예외 처리
                 if ghost_key == '참고문헌':
                     item['title'] = raw_title
                 else:
