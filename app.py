@@ -1119,7 +1119,7 @@ st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
 # --- 도움말 팝업 링크 추가 ---
 help_link_html = """
 <div style="margin-top: -10px; margin-bottom: 20px;">
-    <a href="help.html" target="_blank" onclick="window.open('help.html', 'HelpWindow', 'width=800,height=700,scrollbars=yes'); return false;" style="display: inline-block; padding: 6px 12px; font-size: 14px; font-weight: 600; color: #0068c9; background-color: #f0f2f6; border: 1px solid #cce1ff; border-radius: 6px; text-decoration: none;">
+    <a href="bookmark_help.html" target="_blank" onclick="window.open('bookmark_help.html', 'HelpWindow', 'width=800,height=700,scrollbars=yes'); return false;" style="display: inline-block; padding: 6px 12px; font-size: 14px; font-weight: 600; color: #0068c9; background-color: #f0f2f6; border: 1px solid #cce1ff; border-radius: 6px; text-decoration: none;">
         💡 사용 방법 및 도움말 보기
     </a>
 </div>
