@@ -158,21 +158,17 @@ class PageCache:
             page = self.doc[p_idx]
             bboxes = []
             
-            # 1. 일반 테이블 탐지 배제
             for t in page.find_tables():
                 try:
                     bboxes.append(fitz.Rect(t.bbox))
                 except Exception:
                     pass
                 
-            # 2. 벡터 드로잉(Box) 탐지 배제 -> 박스 안 가짜 목차 원천 차단
             for d in page.get_drawings():
                 for item in d.get("items", []):
                     if item[0] in ("re", "qu"):  
-                        # [섬세한 수정] 비정상적인 벡터 객체 변환 에러(assert len(ret) == 4) 방어망 추가
                         try:
                             rect = fitz.Rect(item[1])
-                            # 유의미한 크기의 사각형이면서 전체 페이지 테두리가 아닌 경우 배제
                             if 80 < rect.width < page.rect.width * 0.95 and 30 < rect.height < page.rect.height * 0.95:
                                 bboxes.append(rect)
                         except Exception:
