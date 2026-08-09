@@ -156,9 +156,21 @@ class PageCache:
         if p_idx not in self.exclude_bboxes_cache:
             page = self.doc[p_idx]
             bboxes = []
-            # [수정] 박스 형태의 모든 테이블 무시 (행/열 갯수 조건 삭제하여 가짜 목차 박스 배제)
+            
+            # [수정/추가] 1. PyMuPDF 기본 테이블 탐지하여 배제
             for t in page.find_tables():
                 bboxes.append(fitz.Rect(t.bbox))
+                
+            # [수정/추가] 2. 사각형(Box) 형태의 벡터 드로잉 영역 배제 (가짜 목차 박스 원천 차단)
+            for d in page.get_drawings():
+                for item in d.get("items", []):
+                    # "re"는 Rectangle, "qu"는 Quad를 의미
+                    if item[0] in ("re", "qu"):
+                        rect = fitz.Rect(item[1])
+                        # 유의미한 크기의 박스이면서, 전체 페이지를 덮는 테두리선이 아닐 경우 배제 영역으로 추가
+                        if 100 < rect.width < page.rect.width * 0.95 and 50 < rect.height < page.rect.height * 0.95:
+                            bboxes.append(rect)
+                            
             self.exclude_bboxes_cache[p_idx] = bboxes
         return self.exclude_bboxes_cache[p_idx]
 
@@ -689,7 +701,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                             if cand_level_toc in [2, 3] and get_parent_1depth(item['page_idx'], item['y0'], resolved_items) != cand_1depth_parent: continue 
                             item_prefix = extract_prefix(item['title'].replace('[점검] ', ''), rx_lvl1, rx_lvl2, rx_lvl3)
                             if item_prefix == cand_prefix and get_ratio(CLEAN_PATTERN.sub('', item['title'].replace('[점검] ', '')), cand_clean) > 0.40:
-                                # [수정] 성공적으로 찾은 기존 TOC 항목을 다른 페이지의 스캔 텍스트로 덮어쓰지 않도록 보호
                                 if not item.get('is_failed', False) and item.get('toc_idx', 999) != 999:
                                     if item['page_idx'] != p_idx:
                                         continue
@@ -705,7 +716,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 is_dup = True; break
 
                     if not is_dup:
-                        # [수정] 본문 스캔 시 임의의 '1. XXX' 항목이 1-depth를 무단으로 차지하지 못하도록 강제 통제 (TOC 엄격 의존)
                         if cand_level_toc == 1:
                             is_allowed_1depth = False
                             if is_summary_forced or is_ghost_title(cand_clean, p_idx):
@@ -719,7 +729,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                         break
                                         
                             if not is_allowed_1depth:
-                                cand_level_toc = 2  # 조건에 맞지 않으면 강제로 2-depth로 강등하여 서열 교란 방지
+                                cand_level_toc = 2  
 
                         if SCAN_MODE == "FULL_SCAN":
                             is_garbage = False
