@@ -410,22 +410,37 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         
     return 2
 
+# [수정] 30 이상의 번호는 목차로 오인하지 않도록 강제 제한 (연도/인용번호 등 가비지 방지)
 def get_seq_info(title):
     t = title.strip()
     m = re.match(r'^([1-9]\d*(?:\.\d+)+)\.(\d+)[\.\)]?\s*', t)
-    if m: return (f"num_dot_sub_{m.group(1).replace('.', '_')}", int(m.group(2)))
+    if m: 
+        sn = int(m.group(2))
+        if sn <= 30: return (f"num_dot_sub_{m.group(1).replace('.', '_')}", sn)
     m = re.match(r'^([1-9]\d*)\.(\d+)[\.\)]?\s*', t)
-    if m: return (f"num_dot_{m.group(1)}", int(m.group(2)))
+    if m: 
+        sn = int(m.group(2))
+        if sn <= 30: return (f"num_dot_{m.group(1)}", sn)
     m = re.match(r'^([1-9]\d*(?:-\d+)*)-([1-9]\d*)[\.\)]?\s*', t)
-    if m: return (f"num_dash_sub_{m.group(1).replace('-', '_')}", int(m.group(2)))
+    if m: 
+        sn = int(m.group(2))
+        if sn <= 30: return (f"num_dash_sub_{m.group(1).replace('-', '_')}", sn)
     m = re.match(r'^제?\s*([1-9]\d*)\s*장\s*', t)
-    if m: return ('num_jang', int(m.group(1)))
+    if m: 
+        sn = int(m.group(1))
+        if sn <= 30: return ('num_jang', sn)
     m = re.match(r'^제?\s*([1-9]\d*)\s*절\s*', t)
-    if m: return ('num_jeol', int(m.group(1)))
+    if m: 
+        sn = int(m.group(1))
+        if sn <= 30: return ('num_jeol', sn)
     m = re.match(r'^\(\s*([1-9]\d*)\s*\)\s*', t)
-    if m: return ('num_paren_both', int(m.group(1)))
+    if m: 
+        sn = int(m.group(1))
+        if sn <= 30: return ('num_paren_both', sn)
     m = re.match(r'^([1-9]\d*)\s*[\)）]\s*', t)
-    if m: return ('num_paren_right', int(m.group(1)))
+    if m: 
+        sn = int(m.group(1))
+        if sn <= 30: return ('num_paren_right', sn)
     m = re.match(rf'^([{KOR_IDX}])\s*\.\s*', t)
     if m: return ('kor_dot', KOR_MAP.get(m.group(1)))
     m = re.match(rf'^([{KOR_IDX}])\s*[\)）]\s*', t)
@@ -433,7 +448,9 @@ def get_seq_info(title):
     m = re.match(rf'^\(\s*([{KOR_IDX}])\s*\)\s*', t)
     if m: return ('kor_paren_both', KOR_MAP.get(m.group(1)))
     m = re.match(r'^([1-9]\d*)\s*\.\s*', t)
-    if m: return ('num_dot', int(m.group(1)))
+    if m: 
+        sn = int(m.group(1))
+        if sn <= 30: return ('num_dot', sn)
     m = re.match(r'^([A-Za-z])[\.\)]\s*', t)
     if m: return ('alpha_dot', ord(m.group(1).upper()) - 64)
     return (None, None)
@@ -715,15 +732,13 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                     if item['page_idx'] != p_idx:
                                         continue
                                         
-                                # [수정/추가] 1-depth 덮어쓰기 역전 및 꼬임 방지 (엄격한 서열 통제)
                                 if item['level'] == 1:
                                     i_type, i_sn = get_seq_info(item['title'].replace('[점검] ', ''))
                                     c_type, c_sn = get_seq_info(text.strip())
                                     if i_type and c_type:
                                         if i_type != c_type or i_sn != c_sn:
-                                            continue  # 번호가 다르면 절대 덮어쓰지 않음
+                                            continue  
                                     
-                                    # 문장이 지나치게 길어지는 가비지 병합 덮어쓰기 방지
                                     if len(cand_clean) > len(CLEAN_PATTERN.sub('', item['title'])) + 15:
                                         continue
                                 
@@ -757,7 +772,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         if SCAN_MODE == "FULL_SCAN":
                             is_garbage = False
                             
-                            # [수정/추가] 영문 논문 저널/연도 등 레퍼런스 스타일 2-depth 가비지 필터링
                             if re.search(r'[a-zA-Z]{5,}', text) and re.search(r'\(\d{4}\)', text):
                                 is_garbage = True
                             if re.search(r'(Journal|journal|Press|press|Transactions|Proceedings|volume|Volume)', text) and re.search(r'\d+', text):
@@ -905,7 +919,8 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             merged_for_pass2 = strict_items_1_2 + [i for i in resolved_items if i['level'] == 3]
             merged_for_pass2.sort(key=get_sort_key)
             
-            current_2d_valid = False
+            # [수정/추가] 3-depth가 1-depth 바로 아래에 올 수 있도록 (2-depth가 없어도) 허용
+            current_parent_valid = False
             current_seq_state_3 = 0
             current_seq_type_3 = None
             current_font_profile_3 = None
@@ -913,17 +928,17 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             for item in merged_for_pass2:
                 lvl = item['level']
                 if lvl == 1:
-                    current_2d_valid = False
+                    current_parent_valid = True
                     current_seq_state_3 = 0
                     current_seq_type_3 = None
                     current_font_profile_3 = None
                 elif lvl == 2:
-                    current_2d_valid = True
+                    current_parent_valid = True
                     current_seq_state_3 = 0
                     current_seq_type_3 = None
                     current_font_profile_3 = None
                 elif lvl == 3:
-                    if not current_2d_valid: continue 
+                    if not current_parent_valid: continue 
                     
                     st_type, sn = get_seq_info(item['title'].replace('[점검] ', ''))
                     is_jump_error = False
@@ -1032,7 +1047,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             
             target_level = item['level']
             
-            # [수정/추가] '참고문헌'이 '기타' 하위에 있을 때 2-depth로 동적 변경 로직 보강
             clean_item_title = CLEAN_PATTERN.sub('', item['title']).lower()
             if '참고문헌' in clean_item_title and len(clean_item_title) <= 15:
                 target_level = 2 if '기타' in current_1depth_title else 1 
