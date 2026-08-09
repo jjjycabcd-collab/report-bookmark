@@ -157,17 +157,17 @@ class PageCache:
             page = self.doc[p_idx]
             bboxes = []
             
-            # 1. PyMuPDF 테이블 탐지 배제
+            # 1. 일반 테이블 탐지 배제
             for t in page.find_tables():
                 bboxes.append(fitz.Rect(t.bbox))
                 
-            # 2. 사각형(Box) 형태의 벡터 드로잉 영역 배제 (가짜 목차 박스 원천 차단)
+            # 2. 벡터 드로잉(Box) 탐지 배제 -> 박스 안 가짜 목차 원천 차단
             for d in page.get_drawings():
                 for item in d.get("items", []):
-                    if item[0] in ("re", "qu"):  # Rectangle 또는 Quad
+                    if item[0] in ("re", "qu"):  
                         rect = fitz.Rect(item[1])
-                        # 유의미한 크기의 박스이면서 전체 페이지를 덮는 테두리가 아닐 경우 배제
-                        if 100 < rect.width < page.rect.width * 0.95 and 50 < rect.height < page.rect.height * 0.95:
+                        # 유의미한 크기의 사각형이면서 전체 페이지 테두리가 아닌 경우 배제
+                        if 80 < rect.width < page.rect.width * 0.95 and 30 < rect.height < page.rect.height * 0.95:
                             bboxes.append(rect)
                             
             self.exclude_bboxes_cache[p_idx] = bboxes
@@ -182,17 +182,23 @@ class PageCache:
             
             for b in dict_data.get("blocks", []):
                 if b.get("type") != 0: continue
+                block_spans = []
+                for l in b.get("lines", []):
+                    for s in l.get("spans", []): block_spans.append(s.get("text", ""))
+                full_block_text = fix_broken_characters("".join(block_spans).replace('\n', ' ').strip())
+                
+                clean_block_for_check = full_block_text.replace(" ", "")
+                # 주의사항, 워터마크 등 불필요 문구가 있는 블록 무시
+                if any(fs in clean_block_for_check for fs in ["이보고서는", "발표하는때에는", "국가과학기술기밀", "국가연구개발보고서원문", "동의없이상업적", "이연구개발내용을대외적으로", "반드시과학기술정보통신부"]): 
+                    continue  
+                    
+                is_desc = bool(re.search(r'(습니다|입니다|합니다|됩니다|바랍니다|시오|세요|할 것|한다|된다|이다|있다|없다|같다|기대된다|판단된다|보인다|수 있다|수 있음|진행함|확인함|관찰함|측정함|평가함|도출함|사용함|나타남|수행함|제조함|분석함|계산함|시행하였다)\.?\s*$', full_block_text))
+                if re.search(r'[\.·]{4,}', full_block_text): continue
                 
                 for l in b.get("lines", []):
                     line_rect = fitz.Rect(l["bbox"])
-                    temp_text = "".join([s.get("text", "") for s in l.get("spans", [])]).strip()
-                    clean_line_for_check = temp_text.replace(" ", "")
-                    
-                    # 워터마크 및 불필요 문구 라인 단위 배제 (블록 전체 누락 방지)
-                    if any(fs in clean_line_for_check for fs in ["이보고서는", "발표하는때에는", "국가과학기술기밀", "국가연구개발보고서원문", "동의없이상업적"]): 
-                        continue
-
                     if self.exclude_footnotes and line_rect.y0 > page_height * 0.85:
+                        temp_text = "".join([s.get("text", "") for s in l.get("spans", [])]).strip()
                         if re.match(r'^\s*[1-9]\d*[\)\.]', temp_text): continue
                             
                     line_center = fitz.Point((line_rect.x0 + line_rect.x1) / 2, (line_rect.y0 + line_rect.y1) / 2)
@@ -211,10 +217,9 @@ class PageCache:
                             
                     text = fix_broken_characters(text.strip())
                     
-                    # 혹시라도 같은 라인에 병합된 워터마크 강제 삭제
+                    # 라인 안에 섞인 워터마크 잔재 청소
                     text = re.sub(r'국가연구개발\s*보고서원문.*?사용할\s*수\s*없습니다\.?', '', text).strip()
-                    
-                    is_desc = bool(re.search(r'(습니다|입니다|합니다|됩니다|바랍니다|시오|세요|할 것|한다|된다|이다|있다|없다|같다|기대된다|판단된다|보인다|수 있다|수 있음|진행함|확인함|관찰함|측정함|평가함|도출함|사용함|나타남|수행함|제조함|분석함|계산함|시행하였다)\.?\s*$', text))
+                    text = re.sub(r'\[별첨\]\s*성과\s*증빙자료.*', '[별첨] 성과 증빙자료', text).strip()
 
                     if text and not re.search(r'[\.·]{4,}', text):
                         lines_data.append({'text': text, 'y0': l["bbox"][1], 'max_size': max_size, 'flags': main_flags, 'color': main_color, 'is_desc': is_desc})
@@ -709,6 +714,18 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 if not item.get('is_failed', False) and item.get('toc_idx', 999) != 999:
                                     if item['page_idx'] != p_idx:
                                         continue
+                                        
+                                # [수정/추가] 1-depth 덮어쓰기 역전 및 꼬임 방지 (엄격한 서열 통제)
+                                if item['level'] == 1:
+                                    i_type, i_sn = get_seq_info(item['title'].replace('[점검] ', ''))
+                                    c_type, c_sn = get_seq_info(text.strip())
+                                    if i_type and c_type:
+                                        if i_type != c_type or i_sn != c_sn:
+                                            continue  # 번호가 다르면 절대 덮어쓰지 않음
+                                    
+                                    # 문장이 지나치게 길어지는 가비지 병합 덮어쓰기 방지
+                                    if len(cand_clean) > len(CLEAN_PATTERN.sub('', item['title'])) + 15:
+                                        continue
                                 
                                 item.update({'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'is_failed': False, 'body_matched': True})
                                 if '점검' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
@@ -721,7 +738,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 is_dup = True; break
 
                     if not is_dup:
-                        # 1-depth는 기본적으로 목차(TOC) 제목을 참조하도록 강제
                         if cand_level_toc == 1:
                             is_allowed_1depth = False
                             if is_summary_forced or is_ghost_title(cand_clean, p_idx):
@@ -740,6 +756,13 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
                         if SCAN_MODE == "FULL_SCAN":
                             is_garbage = False
+                            
+                            # [수정/추가] 영문 논문 저널/연도 등 레퍼런스 스타일 2-depth 가비지 필터링
+                            if re.search(r'[a-zA-Z]{5,}', text) and re.search(r'\(\d{4}\)', text):
+                                is_garbage = True
+                            if re.search(r'(Journal|journal|Press|press|Transactions|Proceedings|volume|Volume)', text) and re.search(r'\d+', text):
+                                is_garbage = True
+                            
                             if re.search(r'(습니다|입니다|합니다|됩니다|한다|된다|이다|있다|없다|같다|기대된다|판단된다|보인다|하였다|되었다|진행함|확인함|관찰함|측정함|평가함|도출함|사용함|나타남|수행함|제조함|분석함|계산함)\.\s+[가-힣A-Z]', text): 
                                 is_garbage = True
                             if len(text) < 100 and not text.endswith(('.', '다.', '함.', '음.', '임.')):
@@ -1009,7 +1032,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             
             target_level = item['level']
             
-            # [수정] 참고문헌이 '기타' 아래에 있을 때 2-depth로 동적 변경 로직
+            # [수정/추가] '참고문헌'이 '기타' 하위에 있을 때 2-depth로 동적 변경 로직 보강
             clean_item_title = CLEAN_PATTERN.sub('', item['title']).lower()
             if '참고문헌' in clean_item_title and len(clean_item_title) <= 15:
                 target_level = 2 if '기타' in current_1depth_title else 1 
