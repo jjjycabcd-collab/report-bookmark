@@ -813,7 +813,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         strict_items_3 = []
         if MAX_DEPTH >= 3:
-            st_logger.print("\n4-B. [독립 스캔] 3-depth 시퀀스 유효성 검증 중 (1, 2-depth 보존)...")
+            st_logger.print("\n4-B. [독립 스캔] 3-depth 시퀀 유효성 검증 중 (1, 2-depth 보존)...")
             
             merged_for_pass2 = strict_items_1_2 + [i for i in resolved_items if i['level'] == 3]
             merged_for_pass2.sort(key=get_sort_key)
