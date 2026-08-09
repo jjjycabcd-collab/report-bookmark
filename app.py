@@ -156,8 +156,9 @@ class PageCache:
         if p_idx not in self.exclude_bboxes_cache:
             page = self.doc[p_idx]
             bboxes = []
+            # [수정] 박스 형태의 모든 테이블 무시 (행/열 갯수 조건 삭제하여 가짜 목차 박스 배제)
             for t in page.find_tables():
-                if t.row_count >= 3 or t.col_count >= 3: bboxes.append(fitz.Rect(t.bbox))
+                bboxes.append(fitz.Rect(t.bbox))
             self.exclude_bboxes_cache[p_idx] = bboxes
         return self.exclude_bboxes_cache[p_idx]
 
@@ -241,39 +242,51 @@ def extract_prefix(t, custom_regex_1=None, custom_regex_2=None, custom_regex_3=N
     if m: return re.sub(r'\s+', '', m.group(1))
     return None
 
-def is_ghost_title(clean_t):
+def is_ghost_title(clean_t, p_idx=0):
     clean_t = clean_t.lower()
     if '영문목차' in clean_t: return True
-    if '영문요약서' in clean_t: return True
+    if '영문요약서' in clean_t: 
+        if p_idx > 20: return False
+        return True
     
     if len(clean_t) <= 25:
         for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
             if kw in clean_t:
                 if not any(x in clean_t for x in ['첨부', '붙임', '책임자']):
+                    if kw in ['summary', 'contents'] and p_idx > 20:
+                        continue
                     return True
                 
     for g in ['별도제출물', '표지', '목차', '참고문헌']:
         if g in clean_t and len(clean_t) <= len(g) + 8: return True
     for g in ['content']:
-        if g in clean_t and len(clean_t) <= len(g) + 5 and not re.search(r'[가-힣]', clean_t): return True
+        if g in clean_t and len(clean_t) <= len(g) + 5 and not re.search(r'[가-힣]', clean_t): 
+            if p_idx > 20: return False
+            return True
     return False
 
-def is_restricted_1depth(clean_title):
+def is_restricted_1depth(clean_title, p_idx=0):
     if not clean_title: return False
     clean_title = clean_title.lower()
     if '영문목차' in clean_title: return True
-    if '영문요약서' in clean_title: return True
+    if '영문요약서' in clean_title: 
+        if p_idx > 20: return False
+        return True
     
     if len(clean_title) <= 25:
         for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
             if kw in clean_title:
                 if not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
+                    if kw in ['summary', 'contents'] and p_idx > 20:
+                        continue
                     return True
                 
     for g in ['표지', '별도제출물', '목차', '참고문헌']:
         if g in clean_title and len(clean_title) <= len(g) + 12: return True
     for g in ['content']:
-        if g in clean_title and len(clean_title) <= len(g) + 5 and not re.search(r'[가-힣]', clean_title): return True
+        if g in clean_title and len(clean_title) <= len(g) + 5 and not re.search(r'[가-힣]', clean_title): 
+            if p_idx > 20: return False
+            return True
     if re.match(r'^\d*(붙임|별첨|부록)', clean_title): return True
     return False
 
@@ -342,11 +355,11 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
             
     return None, 0.0, 0, 0
 
-def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_scan=False, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None):
+def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_scan=False, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None, p_idx=0):
     t = title.strip()
     clean_t = CLEAN_PATTERN.sub('', t)
     
-    if is_ghost_title(clean_t): return 1
+    if is_ghost_title(clean_t, p_idx): return 1
     
     if custom_regex_1 and custom_regex_1.match(t): return 1
     if custom_regex_2 and custom_regex_2.match(t): return 2
@@ -524,7 +537,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 is_jang = bool(re.match(r'^제\d+장', re.sub(r'\s+', '', title)))
                 is_jeol = bool(re.match(r'^제\d+절', re.sub(r'\s+', '', title)))
                 is_butim = bool(re.match(r'^<?\[?(붙임|별첨|부록)', title))
-                is_ghost = is_ghost_title(CLEAN_PATTERN.sub('', title))
+                is_ghost = is_ghost_title(CLEAN_PATTERN.sub('', title), 0)
                 is_valid = is_jang or is_jeol or is_butim or is_ghost or is_3depth_in_jang(title)
                 if not is_valid: continue
             toc_bookmarks.append(t_dict)
@@ -551,7 +564,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             clean_t = CLEAN_PATTERN.sub('', title)
             if clean_t in created_titles: continue
 
-            level = determine_level(title, has_jang, font_size=0, is_body_scan=False, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
+            level = determine_level(title, has_jang, font_size=0, is_body_scan=False, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3, p_idx=0)
             expected_page = printed_page + offset if printed_page > 0 else seq_page
             target_page_idx = min(max(expected_page, toc_end_idx + 1), total_pages - 1)
             found, found_page, found_y0, found_f_size, found_flags, found_color = False, target_page_idx, 0.0, 0.0, 0, 0
@@ -592,7 +605,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 if level == 1: last_1depth_coord = (found_page, 0.0)
                 elif level == 2: last_2depth_coord = (found_page, 0.0)
             
-            final_level = determine_level(title, has_jang, font_size=found_f_size, is_body_scan=False, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3) if found else level
+            final_level = determine_level(title, has_jang, font_size=found_f_size, is_body_scan=False, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3, p_idx=found_page) if found else level
             resolved_items.append({
                 'toc_idx': toc_idx, 'title': title if found else f"[점검] {title}", 
                 'page_idx': found_page, 'y0': found_y0, 'f_size': found_f_size, 
@@ -622,6 +635,8 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
                         if kw in clean_for_summary:
                             if not any(x in clean_for_summary for x in ['첨부', '붙임', '책임자']):
+                                if kw in ['summary', 'contents'] and p_idx > 20:
+                                    continue
                                 is_summary_forced = True
                                 break
                 
@@ -650,15 +665,15 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     if any(fs in text for fs in ["이 보고서는", "발표하는 때에는", "국가과학기술기밀"]): continue
                     
                     cand_prefix, cand_clean, is_dup = extract_prefix(text, rx_lvl1, rx_lvl2, rx_lvl3), CLEAN_PATTERN.sub('', text), False
-                    cand_level_toc = determine_level(text, has_jang, font_size=max_size, font_trackers=global_font_trackers, is_body_scan=True, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
+                    cand_level_toc = determine_level(text, has_jang, font_size=max_size, font_trackers=global_font_trackers, is_body_scan=True, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3, p_idx=p_idx)
                     
                     if cand_level_toc == 99: continue
                     
                     cand_1depth_parent = get_parent_1depth(p_idx, y0, resolved_items)
 
-                    if cand_1depth_parent and is_restricted_1depth(cand_1depth_parent):
+                    if cand_1depth_parent and is_restricted_1depth(cand_1depth_parent, p_idx):
                         if cand_level_toc in [2, 3]: continue
-                        if cand_level_toc == 1 and not (is_ghost_title(cand_clean) or re.match(r'^<?\[?(붙임|별첨|부록)', text.strip()) or re.match(r'^제\s*\d+\s*[장절]', text.strip())): continue
+                        if cand_level_toc == 1 and not (is_ghost_title(cand_clean, p_idx) or re.match(r'^<?\[?(붙임|별첨|부록)', text.strip()) or re.match(r'^제\s*\d+\s*[장절]', text.strip())): continue
                     
                     for item in resolved_items:
                         if item['page_idx'] == p_idx and abs(item['y0'] - y0) < 5.0:
@@ -674,6 +689,11 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                             if cand_level_toc in [2, 3] and get_parent_1depth(item['page_idx'], item['y0'], resolved_items) != cand_1depth_parent: continue 
                             item_prefix = extract_prefix(item['title'].replace('[점검] ', ''), rx_lvl1, rx_lvl2, rx_lvl3)
                             if item_prefix == cand_prefix and get_ratio(CLEAN_PATTERN.sub('', item['title'].replace('[점검] ', '')), cand_clean) > 0.40:
+                                # [수정] 성공적으로 찾은 기존 TOC 항목을 다른 페이지의 스캔 텍스트로 덮어쓰지 않도록 보호
+                                if not item.get('is_failed', False) and item.get('toc_idx', 999) != 999:
+                                    if item['page_idx'] != p_idx:
+                                        continue
+                                
                                 item.update({'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'is_failed': False, 'body_matched': True})
                                 if '점검' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
                                 is_dup = True; break
@@ -685,23 +705,21 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 is_dup = True; break
 
                     if not is_dup:
+                        # [수정] 본문 스캔 시 임의의 '1. XXX' 항목이 1-depth를 무단으로 차지하지 못하도록 강제 통제 (TOC 엄격 의존)
                         if cand_level_toc == 1:
                             is_allowed_1depth = False
-                            if is_summary_forced or is_ghost_title(cand_clean):
+                            if is_summary_forced or is_ghost_title(cand_clean, p_idx):
                                 is_allowed_1depth = True
                             elif re.match(r'^<?\[?(제\s*\d+\s*[장절]|붙임|별첨|부록)', text.strip()):
                                 is_allowed_1depth = True
                             else:
-                                m_num = re.match(r'^\s*([1-9]\d*)[\.\)]', text.strip())
-                                if m_num and int(m_num.group(1)) <= 20:
-                                    is_allowed_1depth = True
-                                elif re.match(rf'^\s*[{KOR_IDX}][\.\)]', text.strip()):
-                                    is_allowed_1depth = True
-                                elif re.match(r'^\s*[A-Z][\.\)]', text.strip()):
-                                    is_allowed_1depth = True
-                                    
+                                for tb in toc_bookmarks:
+                                    if CLEAN_PATTERN.sub('', tb['title']) == cand_clean:
+                                        is_allowed_1depth = True
+                                        break
+                                        
                             if not is_allowed_1depth:
-                                continue
+                                cand_level_toc = 2  # 조건에 맞지 않으면 강제로 2-depth로 강등하여 서열 교란 방지
 
                         if SCAN_MODE == "FULL_SCAN":
                             is_garbage = False
@@ -744,7 +762,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             title = item['title']
             clean_t = CLEAN_PATTERN.sub('', title).lower()
             
-            if is_ghost_title(clean_t) or title in ['표지', '목차', '참고문헌']:
+            if is_ghost_title(clean_t, item['page_idx']) or title in ['표지', '목차', '참고문헌']:
                 strict_items_1_2.append(item)
                 if lvl == 1: 
                     current_1d_title = title
@@ -922,12 +940,14 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             if '영문목차' in clean_title: continue
             
             if '영문요약서' in clean_title:
-                ghost_key = 'Summary'
+                if item['page_idx'] <= 20: ghost_key = 'Summary'
             else:
                 matched_kw = None
                 if len(clean_title) <= 25:
                     for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
                         if kw in clean_title and not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
+                            if kw in ['summary', 'contents'] and item['page_idx'] > 20:
+                                continue
                             matched_kw = kw
                             break
                         
@@ -937,7 +957,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     else: ghost_key = matched_kw
                 elif not re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title):
                     if 'content' in clean_title and not re.search(r'[가-힣]', clean_title):
-                        ghost_key = 'Contents'
+                        if item['page_idx'] <= 20: ghost_key = 'Contents'
                     else:
                         for g in ['별도제출물', '참고문헌']:
                             if g in clean_title:
