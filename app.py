@@ -118,11 +118,12 @@ TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MUL
 
 KOR_IDX = "가나다라마바사아자차카타파하"
 
+# [수정] 연구결과 요약문 등 파생 패턴 대응 추가
 CANDIDATE_PATTERN = re.compile(
     rf'^\s*('
     rf'제\s*\d+\s*[장절][\.\:]?(?:\s+|$)|'
     rf'<?\[?(?:붙임|별첨|부록)\s*\d*\]?(?:\s+|$)|'
-    rf'<?\s*\[?\s*(?:제\s*출\s*문|(?:보\s*고\s*서\s*)?요\s*약\s*서|요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?(?:\s+|$)|'
+    rf'<?\s*\[?\s*(?:제\s*출\s*문|(?:보\s*고\s*서\s*)?요\s*약\s*서|(?:연\s*구\s*결\s*과\s*)?요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?(?:\s+|$)|'
     rf'[1-9]\d*(?:\.\d+)+[\.\)]?(?:\s+|$)|'
     rf'[1-9]\d*\.(?:\s+|$)|'
     rf'[1-9]\d*(?=\s+[가-힣a-zA-Z])|'
@@ -131,11 +132,12 @@ CANDIDATE_PATTERN = re.compile(
     rf'[1-9]\d*[\)）](?:\s+|$)|'
     rf'\([1-9]\d*\)\s*|'
     rf'\([{KOR_IDX}]\)\s*|'
-    rf'[A-Z][\.\)](?:\s+|$)'
+    rf'[A-Za-z][\.\)](?:\s+|$)'
     rf')'
 )
 
-PREFIX_STRIP_PATTERN = re.compile(rf'^\s*(Chapter\s*\d+|Section\s*\d+|제\s*\d+\s*[장절]|<?\s*\[?\s*(?:제\s*출\s*문|(?:보\s*고\s*서\s*)?요\s*약\s*서|요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?|<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?|[{KOR_IDX}]|[1-9]\d*(?:\.\d+)*|(?:\d+-)+\d+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\)）]|\d+|[A-Z])\s*[\.\:\)）]?\s*', re.IGNORECASE)
+# [수정] 전처리 과정에서도 연구결과 요약문 및 알파벳 a-z 패턴 완벽 대응
+PREFIX_STRIP_PATTERN = re.compile(rf'^\s*(Chapter\s*\d+|Section\s*\d+|제\s*\d+\s*[장절]|<?\s*\[?\s*(?:제\s*출\s*문|(?:보\s*고\s*서\s*)?요\s*약\s*서|(?:연\s*구\s*결\s*과\s*)?요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?|<?\[?(?:붙임|별첨|부록)\s*\d*\]?>?|[{KOR_IDX}]|[1-9]\d*(?:\.\d+)*|(?:\d+-)+\d+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\)）]|\d+|[A-Za-z])\s*[\.\:\)）]?\s*', re.IGNORECASE)
 
 KOR_CHARS = list(KOR_IDX)
 KOR_MAP = {k: v + 1 for v, k in enumerate(KOR_CHARS)}
@@ -247,7 +249,7 @@ def extract_prefix(t, custom_regex_1=None, custom_regex_2=None, custom_regex_3=N
         m = custom_regex_3.match(t)
         if m: return re.sub(r'\s+', '', m.group(1))
         
-    m = re.match(rf'^\s*(제\s*\d+\s*[장절]|<?\s*\[?\s*(?:제\s*출\s*문|(?:보\s*고\s*서\s*)?요\s*약\s*서|요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?|[1-9]\d*(?:\.\d+)+|[{KOR_IDX}][-\.]\d+|[1-9]\d*(?:-\d+)+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\.\)）]|[1-9]\d*[\.\)）]|[A-Z][\.\)]|[1-9]\d*(?=\s+[가-힣a-zA-Z]))', t)
+    m = re.match(rf'^\s*(제\s*\d+\s*[장절]|[1-9]\d*(?:\.\d+)+|[{KOR_IDX}][-\.]\d+|[1-9]\d*(?:-\d+)+|\([1-9]\d*\)|\([{KOR_IDX}]\)|[{KOR_IDX}][\.\)）]|[1-9]\d*[\.\)）]|[A-Z][\.\)]|[1-9]\d*(?=\s+[가-힣a-zA-Z]))', t)
     if m: return re.sub(r'\s+', '', m.group(1))
     return None
 
@@ -340,6 +342,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
             
     return None, 0.0, 0, 0
 
+# [수정] a), b) 등 소문자 알파벳 괄호를 2-depth로 인식하도록 정밀 수정
 def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_scan=False, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None):
     t = title.strip()
     clean_t = CLEAN_PATTERN.sub('', t)
@@ -358,12 +361,13 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         return 99 
         
     if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+-\d+[\.\)]?', t): return 3
-    if re.match(r'^\([1-9]\d*\)(?:\s+|$)', t) or re.match(rf'^\([{KOR_IDX}]\)(?:\s+|$)', t) or re.match(r'^[a-z]\)(?:\s+|$)', t): return 3
+    if re.match(r'^\([1-9]\d*\)(?:\s+|$)', t) or re.match(rf'^\([{KOR_IDX}]\)(?:\s+|$)', t): return 3
 
+    # [수정] A. 및 a) 등 A-Za-z 패턴 전체를 2-depth로 분류 (요청사항 반영)
     if re.match(r'^제\s*\d+\s*절', t): return 2
     if re.match(r'^[1-9]\d*\.\d+[\.\s]?', t): return 2 
     if re.match(r'^[1-9]\d*-\d+[\.\)]?', t): return 2 
-    if re.match(r'^[A-Z][\.\)]\s*', t): return 2 
+    if re.match(r'^[A-Za-z][\.\)]\s*', t): return 2 
     if re.match(r'^[1-9]\d*[\)）](?:\s+|$)', t): return 2
     if re.match(rf'^[{KOR_IDX}][\.\)）]\s*', t): return 2 
     
@@ -375,6 +379,7 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         
     return 2
 
+# [수정] a), b) 도 시퀀스 검증 로직에서 올바르게 트래킹 되도록 A-Za-z 정규식 반영
 def get_seq_info(title):
     t = title.strip()
     m = re.match(r'^([1-9]\d*(?:\.\d+)+)\.(\d+)[\.\)]?(?:\s+|$)', t)
@@ -399,7 +404,7 @@ def get_seq_info(title):
     if m: return ('kor_paren_both', KOR_MAP.get(m.group(1)))
     m = re.match(r'^([1-9]\d*)\s*\.(?:\s*|$)', t)
     if m: return ('num_dot', int(m.group(1)))
-    m = re.match(r'^([A-Z])[\.\)](?:\s+|$)', t)
+    m = re.match(r'^([A-Za-z])[\.\)](?:\s+|$)', t)
     if m: return ('alpha_dot', ord(m.group(1).upper()) - 64)
     return (None, None)
 
@@ -482,7 +487,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 toc_end_idx = i 
             else: break
 
-        # [수정] 파편화된 목차 구조(줄바꿈) 병합 처리
         toc_text = re.sub(r'([1-9]\d*-)\s*\n\s*([1-9]\d*)', r'\1\2', toc_text)
         toc_text = re.sub(r'([1-9]\d*[\.\)]|[{KOR_IDX}][\.\)])\s*\n\s*([가-힣a-zA-Z<\[])', r'\1 \2', toc_text)
         toc_text = re.sub(r'(제\s*\d+)\s*\n+\s*(장|절)', r'\1\2', toc_text)
@@ -897,7 +901,13 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             if ghost_key:
                 if ghost_key in seen_ghosts: continue  
                 seen_ghosts.add(ghost_key)
-                item['title'] = ghost_key
+                
+                # [수정] 참고문헌은 "7. 참고문헌" 등 본문 그대로의 제목을 유지하도록 예외 처리
+                if ghost_key == '참고문헌':
+                    item['title'] = raw_title
+                else:
+                    item['title'] = ghost_key
+                
                 item['level'] = 1 
                 filtered_items.append(item)
             elif any(x in clean_title for x in ['표지', '목차']) and len(clean_title) <= 10: continue 
