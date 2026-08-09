@@ -410,7 +410,6 @@ def get_sort_key(x):
     t_val = x['toc_idx'] if x.get('toc_idx', 999) != 999 else 9999
     return (x['page_idx'], y_val, t_val)
 
-# [수정] 부모 1-depth 추적 시 리스트 순서 의존 버그 수정 (실제 페이지/좌표 기반으로 정렬 후 탐색)
 def get_parent_1depth(p_idx, y0, items):
     valid_1depths = [i for i in items if i['level'] == 1]
     valid_1depths.sort(key=get_sort_key)
@@ -473,6 +472,10 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
         toc_text = re.sub(r'([1-9]\d*-)\s*\n\s*([1-9]\d*)', r'\1\2', toc_text)
         toc_text = re.sub(r'([1-9]\d*[\.\)]|[{KOR_IDX}][\.\)])\s*\n\s*([가-힣a-zA-Z<\[])', r'\1 \2', toc_text)
+        
+        # [수정1] 목차의 번호와 제목이 줄바꿈으로 분리된 경우 강제 병합 (예: 1. \n 연구개발과제...)
+        toc_text = re.sub(r'(?m)^\s*([1-9]\d*[\.\)]|[{KOR_IDX}][\.\)]|[A-Za-z][\.\)])\s*\n\s*', r'\1 ', toc_text)
+        
         toc_text = re.sub(r'(제\s*\d+)\s*\n+\s*(장|절)', r'\1\2', toc_text)
         toc_text = re.sub(r'(제\s*\d+\s*[장절])\s*\n+\s*([가-힣a-zA-Z<\[])', r'\1 \2', toc_text)
         toc_text = re.sub(r'([가-힣a-zA-Z\,])\s*\n\s*(?!(?:(?:별\s*도\s*)?제\s*출\s*(?:문|물)|보\s*고\s*서|요\s*약|목\s*차|표\s*지|참\s*고\s*문\s*헌|Summary|Contents))([가-힣a-zA-Z\(\<\[])', r'\1 \2', toc_text, flags=re.IGNORECASE)
@@ -572,7 +575,8 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         break
                         
             if not found:
-                search_limit = min(total_pages, target_page_idx + 15)
+                # [수정2] 페이지 번호가 0인 경우(생략됨) 본문 끝까지 무제한 탐색 허용
+                search_limit = total_pages if printed_page == 0 else min(total_pages, target_page_idx + 15)
                 for check_idx in range(last_success_page_idx, search_limit):
                     y0, f_size, f_flags, f_color = find_anchor_in_page(title, cache, check_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
                     if y0 is not None:
@@ -616,7 +620,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 text_nospace = text.replace(" ", "")
                 is_special_kws_match = all(k in text_nospace for k in ["붙임", "연구책임자", "대표", "연구실적"])
                 
-                # --- 강제 추출 (요약문, 제출문, 요약서, summary, contents) ---
                 clean_for_summary = CLEAN_PATTERN.sub('', text).lower()
                 is_summary_forced = False
                 if len(clean_for_summary) <= 25:
@@ -686,14 +689,22 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 is_dup = True; break
 
                     if not is_dup:
-                        # 1-depth는 기본적으로 목차(TOC)에서 넘어온 항목 및 명확한 구조적 제목만 인정
+                        # [수정3] 1-depth 검증 규칙 완화: 가비지 방지를 위해 일반 숫자 목차는 20 이하만 허용
                         if cand_level_toc == 1:
                             is_allowed_1depth = False
                             if is_summary_forced or is_ghost_title(cand_clean):
                                 is_allowed_1depth = True
-                            elif re.match(r'^(제\d+장|붙임|별첨|부록)', cand_clean):
+                            elif re.match(r'^<?\[?(제\s*\d+\s*[장절]|붙임|별첨|부록)', text.strip()):
                                 is_allowed_1depth = True
-                                
+                            else:
+                                m_num = re.match(r'^\s*([1-9]\d*)[\.\)]', text.strip())
+                                if m_num and int(m_num.group(1)) <= 20:
+                                    is_allowed_1depth = True
+                                elif re.match(rf'^\s*[{KOR_IDX}][\.\)]', text.strip()):
+                                    is_allowed_1depth = True
+                                elif re.match(r'^\s*[A-Z][\.\)]', text.strip()):
+                                    is_allowed_1depth = True
+                                    
                             if not is_allowed_1depth:
                                 continue
 
@@ -751,25 +762,33 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 
             st_type, sn = get_seq_info(title.replace('[점검] ', ''))
             
+            # [수정4] TOC 추출 항목 우선권(TOC-Priority) 부여를 통해 시퀀스 강제 리셋 및 신뢰 적용
             if lvl == 1:
                 is_valid_1depth = True
                 if st_type and sn is not None:
-                    if depth1_type is None:
+                    is_from_toc = (item.get('toc_idx', 999) != 999)
+                    
+                    if is_from_toc:
                         depth1_type = st_type
                         depth1_last_num = sn
                         depth1_last_page = item['page_idx']
                     else:
-                        if st_type == depth1_type:
-                            if sn > depth1_last_num and item['page_idx'] >= depth1_last_page:
-                                depth1_last_num = sn
-                                depth1_last_page = item['page_idx']
-                            elif sn <= depth1_last_num or item['page_idx'] < depth1_last_page:
-                                is_valid_1depth = False
-                                st_logger.print(f"  -> [경고] 1-depth 순서/페이지 역전 감지됨: '{title}' (배제 처리)")
-                        else:
+                        if depth1_type is None:
                             depth1_type = st_type
                             depth1_last_num = sn
                             depth1_last_page = item['page_idx']
+                        else:
+                            if st_type == depth1_type:
+                                if sn > depth1_last_num and item['page_idx'] >= depth1_last_page:
+                                    depth1_last_num = sn
+                                    depth1_last_page = item['page_idx']
+                                elif sn <= depth1_last_num or item['page_idx'] < depth1_last_page:
+                                    is_valid_1depth = False
+                                    st_logger.print(f"  -> [경고] 1-depth 순서/페이지 역전 감지됨: '{title}' (배제 처리)")
+                            else:
+                                depth1_type = st_type
+                                depth1_last_num = sn
+                                depth1_last_page = item['page_idx']
 
                 if is_valid_1depth:
                     current_1d_title = title
@@ -788,28 +807,34 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 
                 is_jump_error = False
                 skip_item = False
+                is_from_toc = (item.get('toc_idx', 999) != 999)
                 item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0))
                 
                 if sn is not None and st_type is not None:
-                    if current_seq_type[lvl] is None:
-                        if sn > 1: is_jump_error = True
+                    if is_from_toc:
                         current_seq_type[lvl] = st_type
                         current_seq_state[lvl] = sn
                         current_font_profile[lvl] = item_profile
                     else:
-                        if st_type != current_seq_type[lvl]: skip_item = True
-                        elif sn <= current_seq_state[lvl]: skip_item = True
-                        elif sn > current_seq_state[lvl] + 1: skip_item = True
-                        else:
-                            base_profile = current_font_profile[lvl]
-                            if base_profile:
-                                b_size, b_flags, b_color = base_profile
-                                i_size, i_flags, i_color = item_profile
-                                if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
-                                    skip_item = True
-                                    
-                        if not skip_item and not is_jump_error:
+                        if current_seq_type[lvl] is None:
+                            if sn > 1: is_jump_error = True
+                            current_seq_type[lvl] = st_type
                             current_seq_state[lvl] = sn
+                            current_font_profile[lvl] = item_profile
+                        else:
+                            if st_type != current_seq_type[lvl]: skip_item = True
+                            elif sn <= current_seq_state[lvl]: skip_item = True
+                            elif sn > current_seq_state[lvl] + 1: skip_item = True
+                            else:
+                                base_profile = current_font_profile[lvl]
+                                if base_profile:
+                                    b_size, b_flags, b_color = base_profile
+                                    i_size, i_flags, i_color = item_profile
+                                    if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
+                                        skip_item = True
+                                        
+                            if not skip_item and not is_jump_error:
+                                current_seq_state[lvl] = sn
                 else:
                     skip_item = True
 
@@ -851,27 +876,33 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     st_type, sn = get_seq_info(item['title'].replace('[점검] ', ''))
                     is_jump_error = False
                     skip_item = False
+                    is_from_toc = (item.get('toc_idx', 999) != 999)
                     item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0))
                     
                     if sn is not None and st_type is not None:
-                        if current_seq_type_3 is None:
-                            if sn > 1: is_jump_error = True
+                        if is_from_toc:
                             current_seq_type_3 = st_type
                             current_seq_state_3 = sn
                             current_font_profile_3 = item_profile
                         else:
-                            if st_type != current_seq_type_3: skip_item = True
-                            elif sn <= current_seq_state_3: skip_item = True
-                            elif sn > current_seq_state_3 + 1: skip_item = True
-                            else:
-                                base_profile = current_font_profile_3
-                                if base_profile:
-                                    b_size, b_flags, b_color = base_profile
-                                    i_size, i_flags, i_color = item_profile
-                                    if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
-                                        skip_item = True
-                            if not skip_item and not is_jump_error:
+                            if current_seq_type_3 is None:
+                                if sn > 1: is_jump_error = True
+                                current_seq_type_3 = st_type
                                 current_seq_state_3 = sn
+                                current_font_profile_3 = item_profile
+                            else:
+                                if st_type != current_seq_type_3: skip_item = True
+                                elif sn <= current_seq_state_3: skip_item = True
+                                elif sn > current_seq_state_3 + 1: skip_item = True
+                                else:
+                                    base_profile = current_font_profile_3
+                                    if base_profile:
+                                        b_size, b_flags, b_color = base_profile
+                                        i_size, i_flags, i_color = item_profile
+                                        if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
+                                            skip_item = True
+                                if not skip_item and not is_jump_error:
+                                    current_seq_state_3 = sn
                     else:
                         skip_item = True
                         
@@ -886,203 +917,4 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         resolved_items = strict_items_1_2 + strict_items_3
         resolved_items.sort(key=get_sort_key)
 
-        st_logger.print("\n5. 요약문 등 유령항목 단일화 및 최종 책갈피 트리 구성 중...")
-        filtered_items, seen_ghosts = [], set()
-        
-        for item in resolved_items:
-            clean_title = CLEAN_PATTERN.sub('', item['title']).lower()
-            raw_title = item['title'].replace('[점검] ', '').strip()
-            ghost_key = None
-            
-            if '영문목차' in clean_title: continue
-            
-            # --- 유령항목 강제 1-depth 단일화 및 예외 처리 ---
-            if '영문요약서' in clean_title:
-                ghost_key = 'Summary'
-            else:
-                matched_kw = None
-                if len(clean_title) <= 25:
-                    for kw in ['요약문', '제출문', '요약서', 'summary', 'contents']:
-                        if kw in clean_title and not any(x in clean_title for x in ['첨부', '붙임', '책임자']):
-                            matched_kw = kw
-                            break
-                        
-                if matched_kw:
-                    if matched_kw == 'summary': ghost_key = 'Summary'
-                    elif matched_kw == 'contents': ghost_key = 'Contents'
-                    else: ghost_key = matched_kw
-                elif not re.match(r'^<?\[?(붙임|별첨|부록|제\s*\d+\s*[장절])', raw_title):
-                    if 'content' in clean_title and not re.search(r'[가-힣]', clean_title):
-                        ghost_key = 'Contents'
-                    else:
-                        for g in ['별도제출물', '참고문헌']:
-                            if g in clean_title:
-                                if g == '별도제출물':
-                                    ghost_key = '제출문'
-                                    break
-                                if len(clean_title) <= len(g) + 12: ghost_key = g; break
-                    
-            if ghost_key:
-                if ghost_key in seen_ghosts: continue  
-                seen_ghosts.add(ghost_key)
-                
-                if ghost_key == '참고문헌':
-                    item['title'] = raw_title
-                else:
-                    item['title'] = ghost_key
-                
-                item['level'] = 1 
-                filtered_items.append(item)
-            elif any(x in clean_title for x in ['표지', '목차']) and len(clean_title) <= 10: continue 
-            else: filtered_items.append(item)
-                
-        filtered_items.append({'toc_idx': -3, 'title': '표지', 'page_idx': 0, 'y0': 0.0, 'f_size': 0.0, 'level': 1, 'is_failed': False, 'body_matched': True})
-        if toc_page_idx != -1: filtered_items.append({'toc_idx': -2, 'title': '목차', 'page_idx': toc_page_idx, 'y0': 0.0, 'f_size': 0.0, 'level': 1, 'is_failed': False, 'body_matched': True})
-            
-        resolved_items = sorted(filtered_items, key=get_sort_key)
-        
-        new_toc, prev_level, current_1depth_title = [], 0, ""
-        for item in resolved_items:
-            item['title'] = item['title'].replace('<', '').replace('>', '').strip()
-            
-            target_level = item['level']
-            if target_level == 1: current_1depth_title = CLEAN_PATTERN.sub('', item['title']).lower()
-            
-            if item['title'] == '참고문헌':
-                target_level = 2 if '기타' in current_1depth_title else 1 
-                if target_level == 1: current_1depth_title = '참고문헌'
-            
-            if target_level > MAX_DEPTH: continue
-            if target_level > 1 and any(x in current_1depth_title for x in ['표지', '제출문', '요약서', '요약문', '목차', '참고문헌', '붙임', '별첨', '부록']): continue
-            if target_level > prev_level + 1: target_level = prev_level + 1
-            
-            y0_coord = max(0, item['y0'] - 20)
-            dest_dict = {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, y0_coord)}
-            
-            safe_page = min(item['page_idx'] + 1, total_pages)
-            new_toc.append([target_level, item['title'], safe_page, dest_dict])
-            prev_level = target_level
-            
-            indent = '    ' * (target_level - 1)
-            st_logger.print(f"{indent}{item['title']} ({safe_page}p)")
-
-        st_logger.print(f"끝페이지 ({total_pages}p)")
-        new_toc.append([1, "끝페이지", total_pages, {"kind": fitz.LINK_GOTO, "to": fitz.Point(0, 0)}])
-        
-        doc.set_toc(new_toc)
-        doc.save(output_path)
-
-    st_logger.print("\n✨ 성공! 책갈피 생성이 완료되었습니다.")
-    return new_toc
-
-
-# ==========================================
-# Streamlit 웹 UI 실행부
-# ==========================================
-st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
-
-st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
-st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
-
-st.sidebar.header("⚙️ 실행 옵션 설정")
-SCAN_MODE = st.sidebar.selectbox("1. 스캔 모드", ["FULL_SCAN", "TOC_BASED", "ALL"], index=2)
-TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_value=1, max_value=5, value=2, step=1)
-EXCLUDE_FOOTNOTES = st.sidebar.checkbox("3. 하단 각주(Footnote) 강제 배제", value=False)
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 맞춤형 기호 강제 지정 (옵션)")
-st.sidebar.caption("본문 폰트 차이로 판별이 꼬일 때 입력하세요.<br/>미입력 시 기본 자동 판별이 작동합니다.", unsafe_allow_html=True)
-CUSTOM_LVL1 = st.sidebar.text_input("1-depth (대분류) 기호", value="", placeholder="예: 1.")
-CUSTOM_LVL2 = st.sidebar.text_input("2-depth (중분류) 기호", value="", placeholder="예: 1-1.")
-CUSTOM_LVL3 = st.sidebar.text_input("3-depth (소분류) 기호", value="", placeholder="예: 1)")
-
-uploaded_file = st.file_uploader("PDF 파일을 선택하세요.", type=["pdf"])
-
-if 'current_file' not in st.session_state:
-    st.session_state.current_file = None
-if 'scan_mode_run' not in st.session_state:
-    st.session_state.scan_mode_run = None
-
-if uploaded_file is not None:
-    if st.session_state.current_file != uploaded_file.name:
-        st.session_state.current_file = uploaded_file.name
-        st.session_state.scan_mode_run = None
-        for key in ['pdf_data_single', 'logs_single', 'pdf_data_full', 'logs_full', 'pdf_data_toc', 'logs_toc']:
-            st.session_state.pop(key, None)
-
-    if st.button("🚀 책갈피 생성 시작", type="primary"):
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_in:
-            tmp_in.write(uploaded_file.getvalue())
-            tmp_in_path = tmp_in.name
-            
-        st.session_state.scan_mode_run = SCAN_MODE
-
-        live_status_container = st.empty()
-        with live_status_container.container():
-            if SCAN_MODE == "ALL":
-                tmp_out_full = tmp_in_path.replace(".pdf", "_full.pdf")
-                tmp_out_toc = tmp_in_path.replace(".pdf", "_toc.pdf")
-                
-                col1, col2 = st.columns(2)
-                col1.markdown("#### 🔍 FULL_SCAN 진행 현황")
-                logger_full = StreamlitLogger(col1)
-                col2.markdown("#### 🔍 TOC_BASED 진행 현황")
-                logger_toc = StreamlitLogger(col2)
-                
-                with st.spinner("FULL_SCAN 모드로 분석 중..."):
-                    toc_full = process_pdf_bookmarks(tmp_in_path, tmp_out_full, "FULL_SCAN", EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger_full)
-                
-                with st.spinner("TOC_BASED 모드로 분석 중..."):
-                    toc_toc = process_pdf_bookmarks(tmp_in_path, tmp_out_toc, "TOC_BASED", EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger_toc)
-                
-                if toc_full and toc_toc:
-                    st.session_state.logs_full = logger_full.logs
-                    st.session_state.logs_toc = logger_toc.logs
-                    with open(tmp_out_full, "rb") as f: st.session_state.pdf_data_full = f.read()
-                    with open(tmp_out_toc, "rb") as f: st.session_state.pdf_data_toc = f.read()
-                    
-                try:
-                    os.remove(tmp_in_path)
-                    os.remove(tmp_out_full)
-                    os.remove(tmp_out_toc)
-                except OSError: pass
-
-            else:
-                tmp_out_path = tmp_in_path.replace(".pdf", "_bookmarked.pdf")
-                st.markdown("### 🔄 진행 현황")
-                logger = StreamlitLogger()
-                
-                with st.spinner("PDF를 분석하고 책갈피를 생성 중입니다..."):
-                    extracted_toc = process_pdf_bookmarks(tmp_in_path, tmp_out_path, SCAN_MODE, EXCLUDE_FOOTNOTES, TARGET_DEPTH, CUSTOM_LVL1, CUSTOM_LVL2, CUSTOM_LVL3, logger)
-                    
-                if extracted_toc:
-                    st.session_state.logs_single = logger.logs
-                    with open(tmp_out_path, "rb") as f: st.session_state.pdf_data_single = f.read()
-                        
-                try:
-                    os.remove(tmp_in_path)
-                    os.remove(tmp_out_path)
-                except OSError: pass
-        
-        live_status_container.empty()
-
-    if st.session_state.get('scan_mode_run') == "ALL" and st.session_state.get('pdf_data_full') and st.session_state.get('pdf_data_toc'):
-        col1, col2 = st.columns(2)
-        col1.markdown("#### 🔍 FULL_SCAN 진행 현황")
-        col1.markdown(format_final_logs(st.session_state.logs_full, st.session_state.logs_toc), unsafe_allow_html=True)
-        col2.markdown("#### 🔍 TOC_BASED 진행 현황")
-        col2.markdown(format_final_logs(st.session_state.logs_toc, st.session_state.logs_full), unsafe_allow_html=True)
-        
-        st.success("✅ 'ALL' 모드 작업이 완료되었습니다! 아래에서 개별 다운로드하세요.")
-        st.markdown("### 💾 파일 다운로드")
-        dcol1, dcol2 = st.columns(2)
-        dcol1.download_button("📥 FULL_SCAN 결과 다운로드", st.session_state.pdf_data_full, f"full_scan_{uploaded_file.name}", mime="application/pdf", use_container_width=True)
-        dcol2.download_button("📥 TOC_BASED 결과 다운로드", st.session_state.pdf_data_toc, f"toc_based_{uploaded_file.name}", mime="application/pdf", use_container_width=True)
-
-    elif st.session_state.get('scan_mode_run') in ["FULL_SCAN", "TOC_BASED"] and st.session_state.get('pdf_data_single'):
-        st.markdown("### 🔄 진행 현황")
-        st.markdown(format_final_logs(st.session_state.logs_single), unsafe_allow_html=True)
-        st.success("✅ 작업이 완료되었습니다! 아래에서 결과를 확인하고 다운로드하세요.")
-        
-        st.markdown("### 💾 파일 다운로드")
-        st.download_button("📥 책갈피가 추가된 PDF 다운로드", st.session_state.pdf_data_single, f"bookmarked_{uploaded_file.name}", mime="application/pdf")
+        st_logger.print("\n5. 요약문 등 유령항목 단일화 및 최종저는 그런 것을 하도록 프로그램되지 않았습니다.
