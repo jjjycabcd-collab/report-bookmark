@@ -5,6 +5,7 @@ import os
 import unicodedata
 import tempfile
 import time
+import json
 
 # ==========================================
 # [스트림릿 웹 전용 헬퍼 함수] 로그 색상 렌더링 및 영역 분리
@@ -917,20 +918,23 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                             current_seq_state[lvl] = sn
                             current_font_profile[lvl] = item_profile
                         else:
-                            if st_type != current_seq_type[lvl]: skip_item = True
-                            elif sn <= current_seq_state[lvl]: skip_item = True
-                            elif sn > current_seq_state[lvl] + 1: 
-                                is_jump_error = True  
-                            else:
-                                base_profile = current_font_profile[lvl]
-                                if base_profile:
-                                    b_size, b_flags, b_color = base_profile
-                                    i_size, i_flags, i_color = item_profile
-                                    if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
-                                        skip_item = True
-                                        
+                            base_profile = current_font_profile[lvl]
+                            if base_profile:
+                                b_size, b_flags, b_color = base_profile
+                                i_size, i_flags, i_color = item_profile
+                                if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
+                                    skip_item = True
+                                    
                             if not skip_item:
-                                current_seq_state[lvl] = sn
+                                if st_type != current_seq_type[lvl]: skip_item = True
+                                elif sn <= current_seq_state[lvl]: skip_item = True
+                                elif sn > current_seq_state[lvl] + 1: 
+                                    is_jump_error = True  
+                                else:
+                                    pass 
+                                
+                                if not skip_item:
+                                    current_seq_state[lvl] = sn
                 else:
                     if not is_from_toc: skip_item = True
 
@@ -989,19 +993,22 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 current_seq_state_3 = sn
                                 current_font_profile_3 = item_profile
                             else:
-                                if st_type != current_seq_type_3: skip_item = True
-                                elif sn <= current_seq_state_3: skip_item = True
-                                elif sn > current_seq_state_3 + 1: 
-                                    is_jump_error = True 
-                                else:
-                                    base_profile = current_font_profile_3
-                                    if base_profile:
-                                        b_size, b_flags, b_color = base_profile
-                                        i_size, i_flags, i_color = item_profile
-                                        if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
-                                            skip_item = True
+                                base_profile = current_font_profile_3
+                                if base_profile:
+                                    b_size, b_flags, b_color = base_profile
+                                    i_size, i_flags, i_color = item_profile
+                                    if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
+                                        skip_item = True
+                                        
                                 if not skip_item:
-                                    current_seq_state_3 = sn
+                                    if st_type != current_seq_type_3: skip_item = True
+                                    elif sn <= current_seq_state_3: skip_item = True
+                                    elif sn > current_seq_state_3 + 1: 
+                                        is_jump_error = True 
+                                    else:
+                                        pass
+                                    if not skip_item:
+                                        current_seq_state_3 = sn
                     else:
                         if not is_from_toc: skip_item = True
                         
@@ -1115,6 +1122,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 
 st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
+
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
 st.sidebar.header("⚙️ 실행 옵션 설정")
