@@ -87,7 +87,7 @@ class StreamlitLogger:
         self.placeholder.markdown(formatted_html, unsafe_allow_html=True)
 
 # ==========================================
-# 유사도 검사 라이브러리 지원
+# 유사도 검사 라이브러리 지원 및 기본 함수
 # ==========================================
 try:
     from rapidfuzz import fuzz
@@ -100,6 +100,12 @@ def get_ratio(s1, s2):
     if HAS_RAPIDFUZZ:
         return fuzz.ratio(s1, s2) / 100.0
     return difflib.SequenceMatcher(None, s1, s2).ratio()
+
+def clean_fname(f):
+    if not f: return ""
+    f = str(f)
+    if '+' in f: f = f.split('+', 1)[1]
+    return f.lower().replace("-", "").replace(" ", "").replace(",", "")
 
 # ==========================================
 # 정규표현식 및 상수 사전 컴파일
@@ -208,7 +214,7 @@ class PageCache:
                     line_center = fitz.Point((line_rect.x0 + line_rect.x1) / 2, (line_rect.y0 + line_rect.y1) / 2)
                     if any(tb.contains(line_center) for tb in exclude_bboxes): continue
                         
-                    text, last_x1, max_size, main_flags, main_color = "", -1, 0.0, 0, 0
+                    text, last_x1, max_size, main_flags, main_color, main_font = "", -1, 0.0, 0, 0, ""
                     for s in l.get("spans", []):
                         span_text, s_x0 = s.get("text", ""), s["bbox"][0]
                         f_size = s.get("size", 10.0)
@@ -220,13 +226,14 @@ class PageCache:
                             max_size = s.get("size", 0.0)
                             main_flags = s.get("flags", 0)
                             main_color = s.get("color", 0)
+                            main_font = s.get("font", "")
                             
                     text = fix_broken_characters(text.strip())
                     text = re.sub(r'국가연구개발\s*보고서원문.*?사용할\s*수\s*없습니다\.?', '', text).strip()
                     text = re.sub(r'\[별첨\]\s*성과\s*증빙자료.*', '[별첨] 성과 증빙자료', text).strip()
 
                     if text and not re.search(r'[\.·]{4,}', text):
-                        lines_data.append({'text': text, 'y0': l["bbox"][1], 'max_size': max_size, 'flags': main_flags, 'color': main_color, 'is_desc': is_desc})
+                        lines_data.append({'text': text, 'y0': l["bbox"][1], 'max_size': max_size, 'flags': main_flags, 'color': main_color, 'font': main_font, 'is_desc': is_desc})
             self.valid_lines_cache[p_idx] = lines_data
         return self.valid_lines_cache[p_idx]
 
@@ -320,7 +327,7 @@ def is_3depth_in_jang(title):
     return False
 
 def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None):
-    if p_idx <= toc_end_idx: return None, 0.0, 0, 0 
+    if p_idx <= toc_end_idx: return None, 0.0, 0, 0, "" 
     dict_data = cache.get_dict(p_idx)
     toc_body = PREFIX_STRIP_PATTERN.sub('', toc_title).strip()
     toc_clean = CLEAN_PATTERN.sub('', toc_body)
@@ -333,7 +340,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
     for b in dict_data.get("blocks", []):
         if b.get("type") != 0: continue
         for l in b.get("lines", []):
-            text, last_x1, max_size, main_flags, main_color = "", -1, 0.0, 0, 0
+            text, last_x1, max_size, main_flags, main_color, main_font = "", -1, 0.0, 0, 0, ""
             for s in l.get("spans", []):
                 span_text, s_x0 = s.get("text", ""), s["bbox"][0]
                 f_size = s.get("size", 10.0)
@@ -345,6 +352,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
                     max_size = s.get("size", 0.0)
                     main_flags = s.get("flags", 0)
                     main_color = s.get("color", 0)
+                    main_font = s.get("font", "")
             
             text = fix_broken_characters(text.strip())
             text_prefix = extract_prefix(text, custom_regex_1, custom_regex_2, custom_regex_3)
@@ -354,13 +362,13 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
             text_clean = CLEAN_PATTERN.sub('', text_body)
             if not text_clean: text_clean = CLEAN_PATTERN.sub('', text)
             
-            if toc_core in text_clean and len(text_clean) <= len(toc_clean) + 15: return l["bbox"][1], max_size, main_flags, main_color
+            if toc_core in text_clean and len(text_clean) <= len(toc_clean) + 15: return l["bbox"][1], max_size, main_flags, main_color, main_font
             if len(toc_clean) - 5 <= len(text_clean) <= len(toc_clean) + 20:
-                if get_ratio(toc_clean, text_clean[:len(toc_clean) + 5]) >= 0.75: return l["bbox"][1], max_size, main_flags, main_color
+                if get_ratio(toc_clean, text_clean[:len(toc_clean) + 5]) >= 0.75: return l["bbox"][1], max_size, main_flags, main_color, main_font
                     
     for b in dict_data.get("blocks", []):
         if b.get("type") != 0: continue
-        block_text, min_y0, max_size, main_flags, main_color = "", 9999.0, 0.0, 0, 0
+        block_text, min_y0, max_size, main_flags, main_color, main_font = "", 9999.0, 0.0, 0, 0, ""
         last_x1 = -1
         for l in b.get("lines", []):
             if l["bbox"][1] < min_y0: min_y0 = l["bbox"][1]
@@ -375,6 +383,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
                     max_size = s.get("size", 0.0)
                     main_flags = s.get("flags", 0)
                     main_color = s.get("color", 0)
+                    main_font = s.get("font", "")
             if not block_text.endswith(' '): block_text += " "
             last_x1 = -1
         
@@ -385,9 +394,9 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
         block_body = PREFIX_STRIP_PATTERN.sub('', block_text).strip()
         block_clean = CLEAN_PATTERN.sub('', block_body)
         if not block_clean: block_clean = CLEAN_PATTERN.sub('', block_text)
-        if block_clean.find(toc_core) != -1 and block_clean.find(toc_core) < 50: return min_y0, max_size, main_flags, main_color
+        if block_clean.find(toc_core) != -1 and block_clean.find(toc_core) < 50: return min_y0, max_size, main_flags, main_color, main_font
             
-    return None, 0.0, 0, 0
+    return None, 0.0, 0, 0, ""
 
 def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_scan=False, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None, p_idx=0):
     t = title.strip()
@@ -600,7 +609,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         for item in toc_bookmarks:
             if item['p_num'] == 0: continue
             for p_idx in range(toc_end_idx + 1, total_pages):
-                y0, _, _, _ = find_anchor_in_page(item['title'], cache, p_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
+                y0, _, _, _, _ = find_anchor_in_page(item['title'], cache, p_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
                 if y0 is not None:
                     offset = p_idx - item['p_num']
                     break
@@ -620,7 +629,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             level = determine_level(title, has_jang, font_size=0, is_body_scan=False, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3, p_idx=0)
             expected_page = printed_page + offset if printed_page > 0 else seq_page
             target_page_idx = min(max(expected_page, toc_end_idx + 1), total_pages - 1)
-            found, found_page, found_y0, found_f_size, found_flags, found_color = False, target_page_idx, 0.0, 0.0, 0, 0
+            found, found_page, found_y0, found_f_size, found_flags, found_color, found_f_name = False, target_page_idx, 0.0, 0.0, 0, 0, ""
 
             min_page, min_y0 = -1, -1
             if level == 3 and last_2depth_coord[0] != -1: min_page, min_y0 = last_2depth_coord
@@ -630,21 +639,21 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             for local_offset in [0, -1, 1, -2, 2]:
                 check_idx = target_page_idx + local_offset
                 if toc_end_idx < check_idx < total_pages: 
-                    y0, f_size, f_flags, f_color = find_anchor_in_page(title, cache, check_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
+                    y0, f_size, f_flags, f_color, f_name = find_anchor_in_page(title, cache, check_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
                     if y0 is not None:
                         if min_page != -1 and (check_idx < min_page or (check_idx == min_page and y0 < min_y0 - 5.0)): continue
                         if check_idx < strict_seq_page or (check_idx == strict_seq_page and y0 < strict_seq_y0 - 5.0): continue
-                        found, found_page, found_y0, found_f_size, found_flags, found_color = True, check_idx, y0, f_size, f_flags, f_color
+                        found, found_page, found_y0, found_f_size, found_flags, found_color, found_f_name = True, check_idx, y0, f_size, f_flags, f_color, f_name
                         break
                         
             if not found:
                 search_limit = total_pages if printed_page == 0 else min(total_pages, target_page_idx + 15)
                 for check_idx in range(last_success_page_idx, search_limit):
-                    y0, f_size, f_flags, f_color = find_anchor_in_page(title, cache, check_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
+                    y0, f_size, f_flags, f_color, f_name = find_anchor_in_page(title, cache, check_idx, toc_end_idx, custom_regex_1=rx_lvl1, custom_regex_2=rx_lvl2, custom_regex_3=rx_lvl3)
                     if y0 is not None:
                         if min_page != -1 and (check_idx < min_page or (check_idx == min_page and y0 < min_y0 - 5.0)): continue
                         if check_idx < strict_seq_page or (check_idx == strict_seq_page and y0 < strict_seq_y0 - 5.0): continue
-                        found, found_page, found_y0, found_f_size, found_flags, found_color = True, check_idx, y0, f_size, f_flags, f_color
+                        found, found_page, found_y0, found_f_size, found_flags, found_color, found_f_name = True, check_idx, y0, f_size, f_flags, f_color, f_name
                         break
             
             if found: 
@@ -662,7 +671,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             resolved_items.append({
                 'toc_idx': toc_idx, 'title': title if found else f"[점검] {title}", 
                 'page_idx': found_page, 'y0': found_y0, 'f_size': found_f_size, 
-                'flags': found_flags, 'color': found_color,
+                'flags': found_flags, 'color': found_color, 'f_name': found_f_name,
                 'level': final_level, 'is_failed': not found, 'body_matched': found, 'printed_page': printed_page
             })
             created_titles.add(clean_t)
@@ -675,7 +684,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 continue
                 
             for line in cache.get_valid_lines(p_idx):
-                text, y0, max_size, main_flags, main_color, is_desc = line['text'], line['y0'], line['max_size'], line['flags'], line['color'], line['is_desc']
+                text, y0, max_size, main_flags, main_color, main_font, is_desc = line['text'], line['y0'], line['max_size'], line['flags'], line['color'], line['font'], line['is_desc']
                 
                 if re.match(r'^\s*<*(표|그림|Table|Fig)[\.\s]*\d+', text, re.IGNORECASE): continue
                 
@@ -701,12 +710,12 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         item_nospace = item['title'].replace('[점검] ', '').replace(" ", "")
                         if all(k in item_nospace for k in ["붙임", "연구책임자", "대표", "연구실적"]):
                             if item.get('is_failed', True):
-                                item.update({'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'is_failed': False, 'body_matched': True, 'level': 1})
+                                item.update({'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'f_name': main_font, 'is_failed': False, 'body_matched': True, 'level': 1})
                                 if '[점검]' in item['title']: item['title'] = item['title'].replace('[점검] ', '')
                             mapped = True
                             break
                     if not mapped:
-                        resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'level': 1, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
+                        resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'f_name': main_font, 'level': 1, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
                     continue 
 
                 if is_summary_forced or CANDIDATE_PATTERN.match(text) or (rx_lvl1 and rx_lvl1.match(text)) or (rx_lvl2 and rx_lvl2.match(text)) or (rx_lvl3 and rx_lvl3.match(text)):
@@ -771,7 +780,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                 else:
                                     final_title = text
 
-                                item.update({'title': final_title, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'is_failed': False, 'body_matched': True})
+                                item.update({'title': final_title, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'f_name': main_font, 'is_failed': False, 'body_matched': True})
                                 is_dup = True; break
                                     
                     if not is_dup:
@@ -817,7 +826,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                             
                             if is_garbage and not is_summary_forced: continue
 
-                        resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'level': cand_level_toc, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
+                        resolved_items.append({'toc_idx': 999, 'title': text, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'f_name': main_font, 'level': cand_level_toc, 'is_failed': False, 'body_matched': True, 'printed_page': 0})
 
         resolved_items.sort(key=get_sort_key)
 
@@ -902,7 +911,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 is_jump_error = False
                 skip_item = False
                 is_from_toc = (item.get('toc_idx', 999) != 999)
-                item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0))
+                item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0), item.get('f_name', ''))
                 
                 if sn is not None and st_type is not None:
                     if current_seq_type[lvl] is None:
@@ -920,9 +929,10 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         else:
                             base_profile = current_font_profile[lvl]
                             if base_profile:
-                                b_size, b_flags, b_color = base_profile
-                                i_size, i_flags, i_color = item_profile
-                                if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
+                                b_size, b_flags, b_color, b_name = base_profile
+                                i_size, i_flags, i_color, i_name = item_profile
+                                
+                                if abs(b_size - i_size) > 0.5 or clean_fname(b_name) != clean_fname(i_name) or b_color != i_color:
                                     skip_item = True
                                     
                             if not skip_item:
@@ -977,7 +987,7 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     is_jump_error = False
                     skip_item = False
                     is_from_toc = (item.get('toc_idx', 999) != 999)
-                    item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0))
+                    item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0), item.get('f_name', ''))
                     
                     if sn is not None and st_type is not None:
                         if current_seq_type_3 is None:
@@ -995,9 +1005,9 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                             else:
                                 base_profile = current_font_profile_3
                                 if base_profile:
-                                    b_size, b_flags, b_color = base_profile
-                                    i_size, i_flags, i_color = item_profile
-                                    if abs(b_size - i_size) > 1.0 or b_flags != i_flags or b_color != i_color:
+                                    b_size, b_flags, b_color, b_name = base_profile
+                                    i_size, i_flags, i_color, i_name = item_profile
+                                    if abs(b_size - i_size) > 0.5 or clean_fname(b_name) != clean_fname(i_name) or b_color != i_color:
                                         skip_item = True
                                         
                                 if not skip_item:
@@ -1075,8 +1085,8 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
             elif any(x in clean_title for x in ['표지', '목차']) and len(clean_title) <= 10: continue 
             else: filtered_items.append(item)
                 
-        filtered_items.append({'toc_idx': -3, 'title': '표지', 'page_idx': 0, 'y0': 0.0, 'f_size': 0.0, 'level': 1, 'is_failed': False, 'body_matched': True})
-        if toc_page_idx != -1: filtered_items.append({'toc_idx': -2, 'title': '목차', 'page_idx': toc_page_idx, 'y0': 0.0, 'f_size': 0.0, 'level': 1, 'is_failed': False, 'body_matched': True})
+        filtered_items.append({'toc_idx': -3, 'title': '표지', 'page_idx': 0, 'y0': 0.0, 'f_size': 0.0, 'f_name': '', 'level': 1, 'is_failed': False, 'body_matched': True})
+        if toc_page_idx != -1: filtered_items.append({'toc_idx': -2, 'title': '목차', 'page_idx': toc_page_idx, 'y0': 0.0, 'f_size': 0.0, 'f_name': '', 'level': 1, 'is_failed': False, 'body_matched': True})
             
         resolved_items = sorted(filtered_items, key=get_sort_key)
         
