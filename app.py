@@ -903,7 +903,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 is_from_toc = (item.get('toc_idx', 999) != 999)
                 item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0))
                 
-                # [수정] 2-depth 번호 순서가 맞지 않거나 누락된 경우 [점검] 태그 달기 로직 보강
                 if sn is not None and st_type is not None:
                     if current_seq_type[lvl] is None:
                         if sn > 1: is_jump_error = True
@@ -976,7 +975,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                     is_from_toc = (item.get('toc_idx', 999) != 999)
                     item_profile = (round(item.get('f_size', 0.0), 1), item.get('flags', 0), item.get('color', 0))
                     
-                    # [수정] 3-depth도 2-depth와 동일하게 번호 순서가 맞지 않거나 누락된 경우 [점검] 태그 달기
                     if sn is not None and st_type is not None:
                         if current_seq_type_3 is None:
                             if sn > 1: is_jump_error = True
@@ -1117,6 +1115,18 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
 st.set_page_config(page_title="PDF 책갈피 자동 생성기", layout="wide")
 
 st.title("📑 PDF 연구보고서 책갈피 자동 생성기")
+
+# --- 도움말 팝업 링크 추가 ---
+help_link_html = """
+<div style="margin-top: -10px; margin-bottom: 20px;">
+    <a href="help.html" target="_blank" onclick="window.open('help.html', 'HelpWindow', 'width=800,height=700,scrollbars=yes'); return false;" style="display: inline-block; padding: 6px 12px; font-size: 14px; font-weight: 600; color: #0068c9; background-color: #f0f2f6; border: 1px solid #cce1ff; border-radius: 6px; text-decoration: none;">
+        💡 사용 방법 및 도움말 보기
+    </a>
+</div>
+"""
+st.markdown(help_link_html, unsafe_allow_html=True)
+# -----------------------------
+
 st.markdown("연구보고서 PDF 파일을 업로드하면 텍스트와 좌표를 분석하여 **자동으로 목차(책갈피)를 생성**합니다.")
 
 st.sidebar.header("⚙️ 실행 옵션 설정")
