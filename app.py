@@ -118,20 +118,21 @@ TOC_PATTERN = re.compile(r'^(.+?)\s*(?:[\.·_-]{2,}|\||\s+)\s*(\d+)\s*$', re.MUL
 
 KOR_IDX = "가나다라마바사아자차카타파하"
 
+# [수정] 기호 뒤의 띄어쓰기가 없어도(예: 1)연구) 완벽하게 식별하도록 \s*로 강화
 CANDIDATE_PATTERN = re.compile(
     rf'^\s*('
-    rf'제\s*\d+\s*[장절][\.\:]?(?:\s+|$)|'
-    rf'<?\[?(?:붙임|별첨|부록)\s*\d*\]?(?:\s+|$)|'
-    rf'<?\s*\[?\s*(?:(?:별\s*도\s*)?제\s*출\s*(?:문|물)|(?:보\s*고\s*서\s*)?요\s*약\s*서|(?:연\s*구\s*결\s*과\s*)?요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?(?:\s+|$)|'
-    rf'[1-9]\d*(?:\.\d+)+[\.\)]?(?:\s+|$)|'
-    rf'[1-9]\d*\.(?:\s+|$)|'
+    rf'제\s*\d+\s*[장절][\.\:]?\s*|'
+    rf'<?\[?(?:붙임|별첨|부록)\s*\d*\]?\s*|'
+    rf'<?\s*\[?\s*(?:(?:별\s*도\s*)?제\s*출\s*(?:문|물)|(?:보\s*고\s*서\s*)?요\s*약\s*서|(?:연\s*구\s*결\s*과\s*)?요\s*약\s*문|표\s*지|참\s*고\s*문\s*헌|[Ss]\s*[Uu]\s*[Mm]\s*[Mm]\s*[Aa]\s*[Rr]\s*[Yy]|[Cc]\s*[Oo]\s*[Nn]\s*[Tt]\s*[Ee]\s*[Nn]\s*[Tt]\s*[Ss]?|목\s*차)\s*\]?\s*>?\s*|'
+    rf'[1-9]\d*(?:\.\d+)+[\.\)]?\s*|'
+    rf'[1-9]\d*\.\s*|'
     rf'[1-9]\d*(?=\s+[가-힣a-zA-Z])|'
     rf'[{KOR_IDX}][\.\)）]\s*|'
-    rf'[1-9]\d*(?:-\d+)+[\.\)]?(?:\s+|$)|'
-    rf'[1-9]\d*[\)）](?:\s+|$)|'
+    rf'[1-9]\d*(?:-\d+)+[\.\)]?\s*|'
+    rf'[1-9]\d*[\)）]\s*|'
     rf'\([1-9]\d*\)\s*|'
     rf'\([{KOR_IDX}]\)\s*|'
-    rf'[A-Za-z][\.\)](?:\s+|$)'
+    rf'[A-Za-z][\.\)]\s*'
     rf')'
 )
 
@@ -340,6 +341,7 @@ def find_anchor_in_page(toc_title, cache, p_idx, toc_end_idx=-1, custom_regex_1=
             
     return None, 0.0, 0, 0
 
+# [수정] 기호 뒤의 띄어쓰기(공백)가 없어도 정밀하게 뎁스를 판별할 수 있도록 \s*로 교체
 def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_scan=False, custom_regex_1=None, custom_regex_2=None, custom_regex_3=None):
     t = title.strip()
     clean_t = CLEAN_PATTERN.sub('', t)
@@ -358,16 +360,16 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         return 99 
         
     if re.match(r'^[1-9]\d*\.\d+\.\d+', t) or re.match(r'^[1-9]\d*-\d+-\d+[\.\)]?', t) or re.match(rf'^[{KOR_IDX}]-\d+-\d+[\.\)]?', t): return 3
-    if re.match(r'^\([1-9]\d*\)(?:\s+|$)', t) or re.match(rf'^\([{KOR_IDX}]\)(?:\s+|$)', t) or re.match(r'^[a-z]\)(?:\s+|$)', t): return 3
+    if re.match(r'^\([1-9]\d*\)\s*', t) or re.match(rf'^\([{KOR_IDX}]\)\s*', t) or re.match(r'^[a-z]\)\s*', t): return 3
 
     if re.match(r'^제\s*\d+\s*절', t): return 2
     if re.match(r'^[1-9]\d*\.\d+[\.\s]?', t): return 2 
     if re.match(r'^[1-9]\d*-\d+[\.\)]?', t): return 2 
     if re.match(r'^[A-Za-z][\.\)]\s*', t): return 2 
-    if re.match(r'^[1-9]\d*[\)）](?:\s+|$)', t): return 2
+    if re.match(r'^[1-9]\d*[\)）]\s*', t): return 2
     if re.match(rf'^[{KOR_IDX}][\.\)）]\s*', t): return 2 
     
-    if re.match(r'^[1-9]\d*\.(?:\s+|$)', t) or re.match(r'^[1-9]\d*\s+[가-힣a-zA-Z]', t):
+    if re.match(r'^[1-9]\d*\.\s*', t) or re.match(r'^[1-9]\d*\s+[가-힣a-zA-Z]', t):
         if font_size > 0.0 and font_trackers is not None:
             if font_trackers.get('depth1', 0.0) == 0.0: font_trackers['depth1'] = font_size
             elif font_size <= font_trackers['depth1'] - 0.8: return 2
@@ -375,31 +377,32 @@ def determine_level(title, has_jang, font_size=0.0, font_trackers=None, is_body_
         
     return 2
 
+# [수정] 동일하게 시퀀스 정보 추출 시 기호 뒤 공백이 없어도 완벽히 추출되도록 \s* 적용
 def get_seq_info(title):
     t = title.strip()
-    m = re.match(r'^([1-9]\d*(?:\.\d+)+)\.(\d+)[\.\)]?(?:\s+|$)', t)
+    m = re.match(r'^([1-9]\d*(?:\.\d+)+)\.(\d+)[\.\)]?\s*', t)
     if m: return (f"num_dot_sub_{m.group(1).replace('.', '_')}", int(m.group(2)))
-    m = re.match(r'^([1-9]\d*)\.(\d+)[\.\)]?(?:\s+|$)', t)
+    m = re.match(r'^([1-9]\d*)\.(\d+)[\.\)]?\s*', t)
     if m: return (f"num_dot_{m.group(1)}", int(m.group(2)))
-    m = re.match(r'^([1-9]\d*(?:-\d+)*)-([1-9]\d*)[\.\)]?(?:\s+|$)', t)
+    m = re.match(r'^([1-9]\d*(?:-\d+)*)-([1-9]\d*)[\.\)]?\s*', t)
     if m: return (f"num_dash_sub_{m.group(1).replace('-', '_')}", int(m.group(2)))
-    m = re.match(r'^제?\s*([1-9]\d*)\s*장(?:\s+|$)', t)
+    m = re.match(r'^제?\s*([1-9]\d*)\s*장\s*', t)
     if m: return ('num_jang', int(m.group(1)))
-    m = re.match(r'^제?\s*([1-9]\d*)\s*절(?:\s+|$)', t)
+    m = re.match(r'^제?\s*([1-9]\d*)\s*절\s*', t)
     if m: return ('num_jeol', int(m.group(1)))
-    m = re.match(r'^\(\s*([1-9]\d*)\s*\)(?:\s+|$)', t)
+    m = re.match(r'^\(\s*([1-9]\d*)\s*\)\s*', t)
     if m: return ('num_paren_both', int(m.group(1)))
-    m = re.match(r'^([1-9]\d*)\s*[\)）](?:\s+|$)', t)
+    m = re.match(r'^([1-9]\d*)\s*[\)）]\s*', t)
     if m: return ('num_paren_right', int(m.group(1)))
-    m = re.match(rf'^([{KOR_IDX}])\s*\.(?:\s*|$)', t)
+    m = re.match(rf'^([{KOR_IDX}])\s*\.\s*', t)
     if m: return ('kor_dot', KOR_MAP.get(m.group(1)))
-    m = re.match(rf'^([{KOR_IDX}])\s*[\)）](?:\s*|$)', t)
+    m = re.match(rf'^([{KOR_IDX}])\s*[\)）]\s*', t)
     if m: return ('kor_paren_right', KOR_MAP.get(m.group(1)))
-    m = re.match(rf'^\(\s*([{KOR_IDX}])\s*\)(?:\s+|$)', t)
+    m = re.match(rf'^\(\s*([{KOR_IDX}])\s*\)\s*', t)
     if m: return ('kor_paren_both', KOR_MAP.get(m.group(1)))
-    m = re.match(r'^([1-9]\d*)\s*\.(?:\s*|$)', t)
+    m = re.match(r'^([1-9]\d*)\s*\.\s*', t)
     if m: return ('num_dot', int(m.group(1)))
-    m = re.match(r'^([A-Za-z])[\.\)](?:\s+|$)', t)
+    m = re.match(r'^([A-Za-z])[\.\)]\s*', t)
     if m: return ('alpha_dot', ord(m.group(1).upper()) - 64)
     return (None, None)
 
@@ -486,7 +489,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         toc_text = re.sub(r'([1-9]\d*[\.\)]|[{KOR_IDX}][\.\)])\s*\n\s*([가-힣a-zA-Z<\[])', r'\1 \2', toc_text)
         toc_text = re.sub(r'(제\s*\d+)\s*\n+\s*(장|절)', r'\1\2', toc_text)
         toc_text = re.sub(r'(제\s*\d+\s*[장절])\s*\n+\s*([가-힣a-zA-Z<\[])', r'\1 \2', toc_text)
-        # [수정] 1페이지 유령항목 찢어짐 방지 정규식
         toc_text = re.sub(r'([가-힣a-zA-Z\,])\s*\n\s*(?!(?:(?:별\s*도\s*)?제\s*출\s*(?:문|물)|보\s*고\s*서|요\s*약|목\s*차|표\s*지|참\s*고\s*문\s*헌|Summary|Contents))([가-힣a-zA-Z\(\<\[])', r'\1 \2', toc_text, flags=re.IGNORECASE)
         toc_text = re.sub(r'([가-힣a-zA-Z\>\]\)])\s*\n+\s*(?:\||[\.·_-]{2,})?\s*(\d+)(?=\s*(\n|$))', r'\1 | \2', toc_text)
 
@@ -616,7 +618,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
         global_font_trackers = {'depth1': 0.0}
 
         st_logger.print("\n3. 본문 스캔(FULL_SCAN) 및 폰트/플래그 프로파일링 중...")
-        # [수정] 1페이지 유령항목 포착을 위해 스캔 범위를 첫 페이지부터 적용
         for p_idx in range(total_pages):
             if toc_page_idx != -1 and toc_page_idx <= p_idx <= toc_end_idx:
                 continue
@@ -893,7 +894,6 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 elif ('contents' in clean_title or 'content' in clean_title) and not re.search(r'[가-힣]', clean_title):
                     ghost_key = 'Contents'
                 else:
-                    # [수정] 단일화 로직 추가: <별도 제출물>, 제 출 문 등을 '제출문'으로 통일
                     for g in ['제출문', '별도제출물', '요약서', '요약문', '참고문헌']:
                         if g in clean_title:
                             if g == '별도제출물':
@@ -970,7 +970,7 @@ TARGET_DEPTH = st.sidebar.number_input("2. 최대 추출 뎁스 (Depth)", min_va
 EXCLUDE_FOOTNOTES = st.sidebar.checkbox("3. 하단 각주(Footnote) 강제 배제", value=False)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 맞춤형 기호 강제 지정 (옵션)")
+st.sidebar.subheader("🎯 맞춤형 기 강제 지정 (옵션)")
 st.sidebar.caption("본문 폰트 차이로 판별이 꼬일 때 입력하세요.<br/>미입력 시 기본 자동 판별이 작동합니다.", unsafe_allow_html=True)
 CUSTOM_LVL1 = st.sidebar.text_input("1-depth (대분류) 기호", value="", placeholder="예: 1.")
 CUSTOM_LVL2 = st.sidebar.text_input("2-depth (중분류) 기호", value="", placeholder="예: 1-1.")
