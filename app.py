@@ -213,7 +213,6 @@ class PageCache:
                             
                     line_center = fitz.Point((line_rect.x0 + line_rect.x1) / 2, (line_rect.y0 + line_rect.y1) / 2)
                     
-                    # [수정] 박스/표 안에 있더라도 '요약문' 등 핵심 1-depth 항목은 예외적으로 구출
                     temp_span_text = "".join([s.get("text", "") for s in l.get("spans", [])])
                     clean_temp_text = CLEAN_PATTERN.sub('', temp_span_text).lower()
                     is_essential_ghost = clean_temp_text in ['요약문', '제출문', '요약서', '연구결과요약문', '보고서요약서', 'summary', 'contents', '영문요약서']
@@ -240,8 +239,64 @@ class PageCache:
                     text = re.sub(r'\[별첨\]\s*성과\s*증빙자료.*', '[별첨] 성과 증빙자료', text).strip()
 
                     if text and not re.search(r'[\.·]{4,}', text):
-                        lines_data.append({'text': text, 'y0': l["bbox"][1], 'max_size': max_size, 'flags': main_flags, 'color': main_color, 'font': main_font, 'is_desc': is_desc})
-            self.valid_lines_cache[p_idx] = lines_data
+                        # [수정] X좌표를 포함시켜 이후 좌우 병합에 활용
+                        lines_data.append({
+                            'text': text, 
+                            'y0': l["bbox"][1], 
+                            'x0': l["bbox"][0],
+                            'x1': l["bbox"][2],
+                            'max_size': max_size, 
+                            'flags': main_flags, 
+                            'color': main_color, 
+                            'font': main_font, 
+                            'is_desc': is_desc
+                        })
+
+            # --- [수정] Y좌표 기반 좌우 병합 로직 추가 ---
+            if lines_data:
+                # 1. Y축 정렬
+                lines_data.sort(key=lambda x: x['y0'])
+                
+                # 2. 인접한 Y축 그룹화
+                grouped = []
+                current_group = [lines_data[0]]
+                for i in range(1, len(lines_data)):
+                    curr = lines_data[i]
+                    prev = current_group[-1]
+                    
+                    y_tol = max(prev['max_size'], curr['max_size']) * 0.5
+                    if y_tol < 2.0: y_tol = 5.0
+                    
+                    if abs(curr['y0'] - prev['y0']) < y_tol:
+                        current_group.append(curr)
+                    else:
+                        grouped.append(current_group)
+                        current_group = [curr]
+                if current_group:
+                    grouped.append(current_group)
+                
+                # 3. 그룹 내 X축 병합
+                merged_lines = []
+                for group in grouped:
+                    group.sort(key=lambda x: x['x0'])
+                    merged_line = group[0]
+                    for i in range(1, len(group)):
+                        curr = group[i]
+                        gap = curr['x0'] - merged_line['x1']
+                        
+                        space = " " if (gap > 0.5 and not merged_line['text'].endswith(' ') and not curr['text'].startswith(' ')) else ""
+                        merged_line['text'] = merged_line['text'] + space + curr['text']
+                        
+                        merged_line['x1'] = max(merged_line['x1'], curr['x1'])
+                        merged_line['max_size'] = max(merged_line['max_size'], curr['max_size'])
+                        merged_line['is_desc'] = merged_line['is_desc'] or curr['is_desc']
+                    
+                    merged_lines.append(merged_line)
+                    
+                self.valid_lines_cache[p_idx] = merged_lines
+            else:
+                self.valid_lines_cache[p_idx] = lines_data
+                
         return self.valid_lines_cache[p_idx]
 
 def fix_broken_characters(text):
