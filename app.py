@@ -822,32 +822,38 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                             item_prefix = extract_prefix(item['title'].replace('[점검] ', ''), rx_lvl1, rx_lvl2, rx_lvl3)
                             
                             # =========================================================================
-                            # [핵심 수정] 과도한 덮어쓰기 방지: 본문 스캔 항목 유사도(Ratio) 임계치 상향 (0.40 -> 0.65)
+                            # [핵심 수정] 사용자 아이디어 반영: 매칭 항목 확정(Lock) 및 덮어쓰기 방어
                             # =========================================================================
                             base_ratio = get_ratio(CLEAN_PATTERN.sub('', item['title'].replace('[점검] ', '')), cand_clean)
-                            if item_prefix == cand_prefix and base_ratio >= 0.65:
-                                if not item.get('is_failed', False) and item.get('toc_idx', 999) != 999:
-                                    if item['page_idx'] != p_idx:
-                                        continue
-                                        
-                                if item['level'] == 1:
-                                    i_type, i_sn = get_seq_info(item['title'].replace('[점검] ', ''))
-                                    c_type, c_sn = get_seq_info(text.strip())
-                                    if i_type and c_type:
-                                        if i_type != c_type or i_sn != c_sn:
-                                            continue  
-                                    
-                                if len(cand_clean) > len(CLEAN_PATTERN.sub('', item['title'])) + 15:
-                                    continue
+                            
+                            if item_prefix == cand_prefix:
+                                is_from_toc = item.get('toc_idx', 999) != 999
                                 
-                                old_t = item['title'].replace('[점검] ', '')
-                                if CLEAN_PATTERN.sub('', old_t) == cand_clean and old_t.count(' ') > text.count(' '):
-                                    final_title = old_t
-                                else:
-                                    final_title = text
+                                # 1) 목차 기반 항목은 확정(Lock). 단, 80% 이상 일치할 때만 띄어쓰기 교정 허용
+                                # 2) 본문 기반 항목은 기존처럼 40% 이상이면 병합 허용 (누락 방지)
+                                if (is_from_toc and base_ratio >= 0.80) or (not is_from_toc and base_ratio >= 0.40):
+                                    if not item.get('is_failed', False) and is_from_toc:
+                                        if item['page_idx'] != p_idx:
+                                            continue
+                                            
+                                    if item['level'] == 1:
+                                        i_type, i_sn = get_seq_info(item['title'].replace('[점검] ', ''))
+                                        c_type, c_sn = get_seq_info(text.strip())
+                                        if i_type and c_type:
+                                            if i_type != c_type or i_sn != c_sn:
+                                                continue  
+                                        
+                                    if len(cand_clean) > len(CLEAN_PATTERN.sub('', item['title'])) + 15:
+                                        continue
+                                    
+                                    old_t = item['title'].replace('[점검] ', '')
+                                    if CLEAN_PATTERN.sub('', old_t) == cand_clean and old_t.count(' ') > text.count(' '):
+                                        final_title = old_t
+                                    else:
+                                        final_title = text
 
-                                item.update({'title': final_title, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'f_name': main_font, 'is_failed': False, 'body_matched': True})
-                                is_dup = True; break
+                                    item.update({'title': final_title, 'page_idx': p_idx, 'y0': y0, 'f_size': max_size, 'flags': main_flags, 'color': main_color, 'f_name': main_font, 'is_failed': False, 'body_matched': True})
+                                    is_dup = True; break
                                     
                     if not is_dup:
                         for x in resolved_items:
