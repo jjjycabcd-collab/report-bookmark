@@ -239,7 +239,6 @@ class PageCache:
                     text = re.sub(r'\[별첨\]\s*성과\s*증빙자료.*', '[별첨] 성과 증빙자료', text).strip()
 
                     if text and not re.search(r'[\.·]{4,}', text):
-                        # [수정] X좌표를 포함시켜 이후 좌우 병합에 활용
                         lines_data.append({
                             'text': text, 
                             'y0': l["bbox"][1], 
@@ -252,7 +251,6 @@ class PageCache:
                             'is_desc': is_desc
                         })
 
-            # --- [수정] Y좌표 기반 좌우 병합 로직 추가 ---
             if lines_data:
                 # 1. Y축 정렬
                 lines_data.sort(key=lambda x: x['y0'])
@@ -820,8 +818,14 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         for item in resolved_items:
                             if item['level'] != cand_level_toc: continue 
                             if cand_level_toc in [2, 3] and get_parent_1depth(item['page_idx'], item['y0'], resolved_items) != cand_1depth_parent: continue 
+                            
                             item_prefix = extract_prefix(item['title'].replace('[점검] ', ''), rx_lvl1, rx_lvl2, rx_lvl3)
-                            if item_prefix == cand_prefix and get_ratio(CLEAN_PATTERN.sub('', item['title'].replace('[점검] ', '')), cand_clean) > 0.40:
+                            
+                            # =========================================================================
+                            # [핵심 수정] 과도한 덮어쓰기 방지: 본문 스캔 항목 유사도(Ratio) 임계치 상향 (0.40 -> 0.65)
+                            # =========================================================================
+                            base_ratio = get_ratio(CLEAN_PATTERN.sub('', item['title'].replace('[점검] ', '')), cand_clean)
+                            if item_prefix == cand_prefix and base_ratio >= 0.65:
                                 if not item.get('is_failed', False) and item.get('toc_idx', 999) != 999:
                                     if item['page_idx'] != p_idx:
                                         continue
@@ -833,8 +837,8 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                                         if i_type != c_type or i_sn != c_sn:
                                             continue  
                                     
-                                    if len(cand_clean) > len(CLEAN_PATTERN.sub('', item['title'])) + 15:
-                                        continue
+                                if len(cand_clean) > len(CLEAN_PATTERN.sub('', item['title'])) + 15:
+                                    continue
                                 
                                 old_t = item['title'].replace('[점검] ', '')
                                 if CLEAN_PATTERN.sub('', old_t) == cand_clean and old_t.count(' ') > text.count(' '):
