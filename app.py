@@ -1002,6 +1002,11 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                 i_size, i_flags, i_color, i_name = item_profile
                 font_match = is_from_toc or (abs(b_size - i_size) <= 0.5 and clean_fname(b_name) == clean_fname(i_name) and b_color == i_color)
                 
+                # [추가 보완] 정확히 다음 번호인 경우 폰트/서식이 조금 달라도(예: 볼드 혼용) 허용 (Lenient Match)
+                if not font_match and not is_from_toc:
+                    if sn == current_seq_state[2] + 1 and abs(b_size - i_size) <= 1.5:
+                        font_match = True
+                        
                 if font_match:
                     if sn == current_seq_state[2] + 1:
                         assigned_level = 2
@@ -1034,6 +1039,11 @@ def process_pdf_bookmarks(input_path, output_path, scan_mode, exclude_footnotes,
                         i_size, i_flags, i_color, i_name = item_profile
                         font_match = is_from_toc or (abs(b_size - i_size) <= 0.5 and clean_fname(b_name) == clean_fname(i_name) and b_color == i_color)
                         
+                        # [추가 보완] 정확히 다음 번호인 경우 폰트/서식이 조금 달라도 허용
+                        if not font_match and not is_from_toc:
+                            if sn == current_seq_state[3] + 1 and abs(b_size - i_size) <= 1.5:
+                                font_match = True
+                                
                         if font_match:
                             if sn == current_seq_state[3] + 1:
                                 assigned_level = 3
